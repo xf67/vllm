@@ -49,6 +49,7 @@ _TEXT_GENERATION_MODELS = {
     "DbrxForCausalLM": ("dbrx", "DbrxForCausalLM"),
     "DeciLMForCausalLM": ("nemotron_nas", "DeciLMForCausalLM"),
     "DeepseekForCausalLM": ("deepseek", "DeepseekForCausalLM"),
+    "MyDeepseekV2ForCausalLM": ("aa_deepseek_v2", "MyDeepseekV2ForCausalLM"),
     "DeepseekV2ForCausalLM": ("deepseek_v2", "DeepseekV2ForCausalLM"),
     "DeepseekV3ForCausalLM": ("deepseek_v2", "DeepseekV3ForCausalLM"),
     "ExaoneForCausalLM": ("exaone", "ExaoneForCausalLM"),

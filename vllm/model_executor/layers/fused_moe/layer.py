@@ -611,7 +611,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
-            indices_type=self.topk_indices_dtype)
+            indices_type=self.topk_indices_dtype) #算的不对，因为拿了logit去算的，而非hidden
 
         if self.rocm_aiter_moe_enabled:
             assert expert_map is None
