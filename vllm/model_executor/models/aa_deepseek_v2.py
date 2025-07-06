@@ -129,7 +129,7 @@ class DeepseekV2MoE(nn.Module):
             reduce_results=False,
             renormalize=config.norm_topk_prob,
             quant_config=quant_config,
-            use_grouped_topk=True,
+            use_grouped_topk=False,
             num_expert_group=config.n_group,
             topk_group=config.topk_group,
             prefix=f"{prefix}.experts",
@@ -156,7 +156,7 @@ class DeepseekV2MoE(nn.Module):
         if self.n_shared_experts is not None:
             shared_output = self.shared_experts(hidden_states)
         # router_logits: (num_tokens, n_experts)
-        router_logits, router_weights = self.gate(hidden_states) 
+        # router_logits, router_weights = self.gate(hidden_states) 
 
         # nvtx_tag = (
         #     f"MoE_forward. B:{num_tokens} Topk:{self.experts.top_k}"
@@ -165,12 +165,12 @@ class DeepseekV2MoE(nn.Module):
         if hidden_states.dtype != torch.float16:
             final_hidden_states = self.experts(
                 hidden_states=hidden_states,
-                router_logits=router_logits,) * self.routed_scaling_factor
+                router_logits=None,) * self.routed_scaling_factor
         else:
             # Fix FP16 overflow
             # See DeepseekV2DecoderLayer for more details.
             final_hidden_states = self.experts(hidden_states=hidden_states,
-                                               router_logits=router_logits,)
+                                               router_logits=None,)
         # nvtx.range_pop()    
         
         if shared_output is not None:
