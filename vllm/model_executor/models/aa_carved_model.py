@@ -172,7 +172,7 @@ class RouterCompoundFast(nn.Module):
         self.norm_topk_prob = config.norm_topk_prob
         self.gating_dim = config.hidden_size
         self.out_gate_weight = nn.Parameter(
-            torch.empty((self.n_routed_experts, self.gating_dim))
+            torch.empty((self.n_routed_experts, self.gating_dim)),requires_grad=False
         )
         self.inner_num = config.inner_num
         self.acti_num = config.num_experts_per_tok
@@ -185,10 +185,10 @@ class RouterCompoundFast(nn.Module):
         self.bigger_size = config.bigger_size
                 
         self.stacked_in_gate_weights = nn.Parameter(
-            torch.empty((self.n_routed_experts, self.bigger_size*self.inner_num, self.gating_dim))
+            torch.empty((self.n_routed_experts, self.bigger_size*self.inner_num, self.gating_dim)),requires_grad=False
         )
         self.stacked_in_up_weights = nn.Parameter(
-            torch.empty((self.n_routed_experts, self.bigger_size*self.inner_num, self.gating_dim))
+            torch.empty((self.n_routed_experts, self.bigger_size*self.inner_num, self.gating_dim)),requires_grad=False
         )
         
         self.deepseek_style = self.deepseek_style = True if 'deepseek' in config.model_type else False
@@ -219,7 +219,7 @@ class RouterCompoundFast(nn.Module):
         return all_inner_scores
 
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward_in(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # TODO: 优化--acti_num有0的时候直接跳
 
         bs, dim = x.shape
@@ -291,9 +291,10 @@ class RouterCompoundFast(nn.Module):
         else:
             return final_weights, final_ids
 
-    def forward_wrap(self,
+    @torch.no_grad()
+    def forward(self,
                     hidden_states,
                     gating_output,
                     topk,
                     renormalize):
-        return self.forward(hidden_states)
+        return self.forward_in(hidden_states)

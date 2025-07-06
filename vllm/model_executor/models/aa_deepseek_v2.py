@@ -135,7 +135,7 @@ class DeepseekV2MoE(nn.Module):
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
-            custom_routing_function=self.gate.forward_wrap)
+            custom_routing_function=self.gate)
 
         if config.n_shared_experts is not None:
             intermediate_size = (config.moe_intermediate_size *
