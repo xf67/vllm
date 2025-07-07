@@ -218,7 +218,6 @@ class RouterCompoundFast(nn.Module):
         all_inner_scores = scores.mean(dim=2)
         return all_inner_scores
 
-
     def forward_in(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # TODO: 优化--acti_num有0的时候直接跳
 
@@ -272,19 +271,18 @@ class RouterCompoundFast(nn.Module):
         selected_inner_ids = flat_expert_ids_expanded * self.inner_num + topk_indices
 
         # final_ids = torch.masked_select(selected_inner_ids, mask).view(bs, total_activated_experts)
+
         expanded_weights = flat_weights[:, None].expand(-1, max_topk)
+
         # final_weights = torch.masked_select(expanded_weights, mask).view(bs, total_activated_experts)
         
+        # Use static graph for compile. (-10000 is a temporary solution, while torch.inf cannot be used here)
+        # P.S. torch.masked_select will lead to a dynamic graph.
+        selected_inner_ids_masked = torch.where(mask, selected_inner_ids, torch.full_like(selected_inner_ids, -10000)).view(bs,-1)
+        final_ids,_ = torch.topk(selected_inner_ids_masked,k=total_activated_experts,dim=-1)
 
-        # 替代 masked_select：用 INVALID_ID 填充无效位，静态 reshape
-        INVALID_ID = -1
-        selected_inner_ids_masked = torch.where(mask, selected_inner_ids, torch.full_like(selected_inner_ids, INVALID_ID))
-        # reshape 到最终形状 (bs, total_activated_experts)
-        final_ids = selected_inner_ids_masked.view(bs, -1)[:, :total_activated_experts]  # 静态裁剪
-
-        # 同理处理 weights
-        masked_weights = torch.where(mask, expanded_weights, torch.zeros_like(expanded_weights))
-        final_weights = masked_weights.view(bs, -1)[:, :total_activated_experts]
+        masked_weights = torch.where(mask, expanded_weights, torch.full_like(expanded_weights,-10000)).view(bs,-1)
+        final_weights,_ = torch.topk(masked_weights,k=total_activated_experts,dim=-1)
 
         if self.deepseek_style:
             return final_ids, final_weights, None
