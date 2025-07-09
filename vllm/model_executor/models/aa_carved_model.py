@@ -3,9 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 from typing import List, Optional, Tuple, Union
 
-
 import torch.cuda.nvtx as nvtx
-
 
 # torch._dynamo.config.capture_dynamic_output_shape_ops = True
 
@@ -159,6 +157,10 @@ try:
         # nvtx.range_pop()
 
         return out_scores
+    
+
+
+
 
 except ImportError:
     print("Triton not found. Falling back to PyTorch implementation.")
@@ -193,6 +195,27 @@ class RouterCompoundFast(nn.Module):
         
         self.deepseek_style = self.deepseek_style = True if 'deepseek' in config.model_type else False
         self.prefix = prefix
+
+
+        self.real_acti_num = sum([ 1 if self.acti_pattern[i]>0 else 0 for i in range(len(self.acti_pattern))])
+        self.real_acti_pattern = self.acti_pattern[:self.real_acti_num]
+        self.total_activated_experts = sum(self.real_acti_pattern)
+        self.inner_topks = torch.tensor(self.real_acti_pattern)
+        self.max_topk = max(self.real_acti_pattern)
+        arange = torch.arange(self.max_topk)
+        self.unit_mask = arange[None, :] < self.inner_topks[:, None] # [k, max_topk]
+        self.indices = torch.nonzero(self.unit_mask.reshape(-1)).squeeze(-1) # [k * max_topk]
+        assert self.indices.numel() == self.total_activated_experts
+
+        # self.real_topk = sum([ 1 if self.acti_pattern[i]>0 else 0 for i in range(len(self.acti_pattern))]) # 去掉list里的0
+        # self.real_inner_route = torch.tensor([1 if self.acti_pattern[i]<self.inner_num else 0 for i in range(self.real_topk)],dtype=torch.bool) # 再去掉list里的full
+        # self.real_acti_num = sum(self.real_inner_route) # 非0非full的数目
+        # self.real_full_k = self.real_topk-self.real_acti_num # full的数目
+        # self.total_activated_experts = sum(self.acti_pattern) # 传出的sub-expert的总数
+        # if self.real_acti_num>0:
+        #     self.real_inner_route_k = torch.tensor(self.acti_pattern[:self.real_topk])[self.real_inner_route].tolist()
+        #     self.max_inner_k = max(self.real_inner_route_k)
+        # self.adder=torch.tensor(range(self.inner_num)).view(self.inner_num, 1)
 
     def init_weight(self, out_gate: nn.Linear, in_gates_list: nn.ModuleList,):
         self.out_gate_weight = nn.Parameter(out_gate.weight.data)
@@ -229,7 +252,7 @@ class RouterCompoundFast(nn.Module):
             x.type(torch.float32), self.out_gate_weight.type(torch.float32), None
         )
         out_scores = F.softmax(logits, dim=-1, dtype=torch.float32)
-        routing_weights, selected_experts = torch.topk(out_scores, self.acti_num, dim=-1)
+        routing_weights, selected_experts = torch.topk(out_scores, self.real_acti_num, dim=-1)
 
         if self.norm_topk_prob:
             routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
@@ -237,7 +260,7 @@ class RouterCompoundFast(nn.Module):
             routing_weights *= self.routed_scaling_factor
 
         # Step 2: Prepare inputs
-        flat_x = x.repeat_interleave(self.acti_num, dim=0)
+        flat_x = x.repeat_interleave(self.real_acti_num, dim=0)
         flat_expert_ids = selected_experts.reshape(-1)
         flat_weights = routing_weights.reshape(-1)
 
@@ -258,36 +281,111 @@ class RouterCompoundFast(nn.Module):
         # all_inner_scores shape: (B*K, E_in)
 
         # Step 4: Inner top-k routing
-        inner_topks = torch.tensor(self.acti_pattern, device=device)[None, :].expand(bs, -1).reshape(-1)
-        max_topk = max(self.acti_pattern)
-        _, topk_indices = torch.topk(all_inner_scores, k=max_topk, dim=-1)
+        
+        _, topk_indices = torch.topk(all_inner_scores, k=self.max_topk, dim=-1) 
+        # triton没有argsort，只有sort，用tirton做fuse不好用
+        # https://github.com/triton-lang/triton/issues/3698
+        # https://github.com/triton-lang/triton/issues/4012
+        # https://github.com/triton-lang/triton/pull/5706
 
-        arange = torch.arange(max_topk, device=device)[None, :]
-        mask = arange < inner_topks[:, None]
+        # inner_topks = self.inner_topks[None, :].expand(bs, -1).reshape(-1)
+        # arange = torch.arange(self.max_topk, device=device)[None, :]
+        # mask = arange < inner_topks[:, None]
+        # mask = self.precomputed_mask.repeat(bs, 1)
 
-        total_activated_experts = sum(self.acti_pattern)
+        flat_expert_ids_expanded = flat_expert_ids[:, None].expand(-1, self.max_topk)
+        selected_inner_ids:torch.Tensor = flat_expert_ids_expanded * self.inner_num + topk_indices
 
-        flat_expert_ids_expanded = flat_expert_ids[:, None].expand(-1, max_topk)
-        selected_inner_ids = flat_expert_ids_expanded * self.inner_num + topk_indices
+        # final_ids_flat = torch.empty(bs * self.total_activated_experts)
+        # final_ids = torch.masked_select(selected_inner_ids, mask)
+        final_ids = selected_inner_ids.reshape(bs,-1)[:,self.indices]
+        # final_ids = final_ids.reshape(bs, self.total_activated_experts)
+        
+        expanded_weights = flat_weights[:, None].expand(-1, self.max_topk)
 
-        # final_ids = torch.masked_select(selected_inner_ids, mask).view(bs, total_activated_experts)
-
-        expanded_weights = flat_weights[:, None].expand(-1, max_topk)
-
-        # final_weights = torch.masked_select(expanded_weights, mask).view(bs, total_activated_experts)
+        # final_weights = torch.masked_select(expanded_weights, mask)
+        final_weights = expanded_weights.reshape(bs, -1)[:,self.indices]
+        # final_weights = final_weights.reshape(bs, self.total_activated_experts)
         
         # Use static graph for compile. (-10000 is a temporary solution, while torch.inf cannot be used here)
         # P.S. torch.masked_select will lead to a dynamic graph.
-        selected_inner_ids_masked = torch.where(mask, selected_inner_ids, torch.full_like(selected_inner_ids, -10000)).view(bs,-1)
-        final_ids,_ = torch.topk(selected_inner_ids_masked,k=total_activated_experts,dim=-1)
+        # selected_inner_ids_masked = torch.where(mask, selected_inner_ids, torch.full_like(selected_inner_ids, -10000)).view(bs,-1)
+        # final_ids,_ = torch.topk(selected_inner_ids_masked,k=total_activated_experts,dim=-1)
 
-        masked_weights = torch.where(mask, expanded_weights, torch.full_like(expanded_weights,-10000)).view(bs,-1)
-        final_weights,_ = torch.topk(masked_weights,k=total_activated_experts,dim=-1)
+        # masked_weights = torch.where(mask, expanded_weights, torch.full_like(expanded_weights,-10000)).view(bs,-1)
+        # final_weights,_ = torch.topk(masked_weights,k=total_activated_experts,dim=-1)
 
         if self.deepseek_style:
             return final_ids, final_weights, None
         else:
             return final_weights, final_ids
+
+    def forward_in2(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        #不行，太痛苦了
+        bs, dim = x.shape
+        device = x.device
+
+        # Step 1: Outer expert selection
+        logits = F.linear(
+            x.type(torch.float32), self.out_gate_weight.type(torch.float32), None
+        )
+        out_scores = F.softmax(logits, dim=-1, dtype=torch.float32)
+        routing_weights, selected_experts = torch.topk(out_scores, self.real_topk, dim=-1)
+
+        if self.norm_topk_prob:
+            routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        else:
+            routing_weights *= self.routed_scaling_factor
+
+        # Step 2: Prepare inputs
+        if self.real_acti_num>0:
+            flat_x = x.repeat_interleave(self.real_acti_num, dim=0)
+            flat_expert_ids = selected_experts[:,self.real_inner_route].reshape(-1)
+            # flat_weights = routing_weights[:,self.real_inner_route].reshape(-1)
+
+            # --- Step 3: Inner Expert Scoring ---
+            all_inner_scores = _router_forward(
+                flat_x,
+                self.stacked_in_gate_weights,
+                self.stacked_in_up_weights,
+                flat_expert_ids,
+                self.inner_num,
+                self.bigger_size
+            )
+        # all_inner_scores shape: (B*K, E_in)
+
+        # Step 4: Inner top-k routing
+        final_ids = torch.empty(bs,self.total_activated_experts,device=device,dtype=selected_experts.dtype)
+        final_weights = torch.empty(bs,self.total_activated_experts,device=device,dtype=routing_weights.dtype)
+
+        # full sub-expert
+        # weights_to_repeat = routing_weights[:, 0:self.real_full_k]
+        # final_weights[:,0:self.real_full_k*self.inner_num] = weights_to_repeat.unsqueeze(2).expand(
+        #     bs, self.real_full_k, self.inner_num
+        # ).reshape(bs, self.real_full_k * self.inner_num)
+        final_weights[:,0:self.real_full_k*self.inner_num] = routing_weights[:,0:self.real_full_k].repeat_interleave(self.inner_num,dim=1)
+        # final_ids[:,0:self.real_full_k*self.inner_num] = (selected_experts[:,0:self.real_full_k].unsqueeze(1) + self.adder).squeeze(-1) 
+        final_ids[:,0:self.real_full_k*self.inner_num] = (selected_experts[:,0:self.real_full_k].unsqueeze(1) + self.adder).reshape(bs, -1)
+        
+        # carved sub-expert
+        if self.real_acti_num>0: #有if编译不了
+            wei,sele = torch.topk(all_inner_scores,self.max_inner_k,dim=1)
+            start_row = 0
+            start_col = self.real_full_k*self.inner_num
+            for k in self.real_inner_route_k:
+                end_row = start_row + bs
+                end_col = start_col + k
+                final_weights[:,start_col:end_col] = wei[start_row:end_row, :k]
+                final_ids[:,start_col:end_col] = sele[start_row:end_row, :k]
+                start_row = end_row
+                start_col = end_col
+
+        if self.deepseek_style:
+            return final_ids, final_weights, None
+        else:
+            return final_weights, final_ids
+
+
 
     @torch.no_grad()
     def forward(self,
