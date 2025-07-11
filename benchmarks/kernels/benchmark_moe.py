@@ -573,10 +573,13 @@ def main(args: argparse.Namespace):
         topk = config.num_experts_per_tok
         intermediate_size = config.intermediate_size
         shard_intermediate_size = 2 * intermediate_size // args.tp_size
-    elif config.architectures[0] in ("DeepseekV3ForCausalLM", "DeepseekV2ForCausalLM"):
+    elif config.architectures[0] in ("DeepseekV3ForCausalLM", "DeepseekV2ForCausalLM", "MyDeepseekV2ForCausalLM"):
         E = config.n_routed_experts
         topk = config.num_experts_per_tok
         intermediate_size = config.moe_intermediate_size
+        if config.architectures[0]=="MyDeepseekV2ForCausalLM":
+            topk = topk * config.inner_num
+            intermediate_size = intermediate_size // config.inner_num
         shard_intermediate_size = 2 * intermediate_size // args.tp_size
     elif config.architectures[0] in ("Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM"):
         E = config.num_experts
@@ -604,20 +607,21 @@ def main(args: argparse.Namespace):
             2,
             4,
             8,
+            12,
             16,
             24,
             32,
             48,
             64,
-            96,
-            128,
-            256,
-            512,
-            1024,
-            1536,
-            2048,
-            3072,
-            4096,
+            # 96,
+            # 128,
+            # 256,
+            # 512,
+            # 1024,
+            # 1536,
+            # 2048,
+            # 3072,
+            # 4096,
         ]
     else:
         batch_sizes = [args.batch_size]
