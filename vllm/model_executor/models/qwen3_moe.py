@@ -103,6 +103,10 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         prefix: str = "",
     ):
         super().__init__()
+        try:
+            self.routed_scaling_factor=config.routed_scaling_factor
+        except:
+            self.routed_scaling_factor = 1.0
         self.tp_size = get_tensor_model_parallel_world_size()
 
         if self.tp_size > config.num_experts:
@@ -140,7 +144,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             final_hidden_states = self.experts.maybe_all_reduce_tensor_model_parallel(  # noqa E501
                 final_hidden_states)
 
-        return final_hidden_states.view(orig_shape)
+        return final_hidden_states.view(orig_shape)*self.routed_scaling_factor
 
 
 class Qwen3MoeAttention(nn.Module):

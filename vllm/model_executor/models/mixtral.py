@@ -73,9 +73,11 @@ class MixtralMoE(nn.Module):
                  quant_config: Optional[QuantizationConfig] = None,
                  tp_size: Optional[int] = None,
                  dp_size: Optional[int] = None,
+                 routed_scaling_factor: int = 1.0,
                  prefix: str = ""):
         super().__init__()
         self.hidden_size = hidden_size
+        self.routed_scaling_factor = routed_scaling_factor
 
         # Gate always runs at half / full precision for now.
 
@@ -104,7 +106,7 @@ class MixtralMoE(nn.Module):
         hidden_states = hidden_states.view(-1, self.hidden_size)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
-        final_hidden_states = self.experts(hidden_states, router_logits)
+        final_hidden_states = self.experts(hidden_states, router_logits)*self.routed_scaling_factor
         return final_hidden_states.view(orig_shape)
 
 
@@ -214,12 +216,17 @@ class MixtralDecoderLayer(nn.Module):
             cache_config=cache_config,
             quant_config=quant_config,
             prefix=f"{prefix}.self_attn")
+        try:
+            routed_scaling_factor=config.routed_scaling_factor
+        except:
+            routed_scaling_factor=1.0
         self.block_sparse_moe = MixtralMoE(
             num_experts=config.num_local_experts,
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             quant_config=quant_config,
+            routed_scaling_factor=routed_scaling_factor,
             prefix=f"{prefix}.block_sparse_moe")
         self.input_layernorm = RMSNorm(config.hidden_size,
                                        eps=config.rms_norm_eps)
