@@ -169,8 +169,16 @@ except ImportError:
 class RouterCompoundFast(nn.Module):
     def __init__(self, config, prefix="gate"):
         super().__init__()
-        self.norm_topk_prob: bool = True
-        self.n_routed_experts = config.n_routed_experts
+        if hasattr(config,"use_mapping") and config.use_mapping:
+            dropped_num=config.dropped_num
+        else:
+            dropped_num=0
+        if hasattr(config,"n_routed_experts"):
+            self.n_routed_experts = (config.n_routed_experts+dropped_num)//config.inner_num #deepseek
+        elif hasattr(config,"num_experts"):
+            self.n_routed_experts = (config.num_experts+dropped_num)//config.inner_num #qwen,olmoe
+        else:
+            raise(KeyError, "num experts not found")
         self.norm_topk_prob = config.norm_topk_prob
         self.gating_dim = config.hidden_size
         self.out_gate_weight = nn.Parameter(
