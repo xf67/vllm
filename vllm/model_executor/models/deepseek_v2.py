@@ -56,6 +56,8 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 
+from .aa_jumped_topk import my_fused_topk,ori_fused_topk
+from .aa_carved_model import RouterCompoundFast
 
 class DeepseekV2MLP(nn.Module):
 
@@ -108,12 +110,18 @@ class DeepseekV2MoE(nn.Module):
         if config.hidden_act != "silu":
             raise ValueError(f"Unsupported activation: {config.hidden_act}. "
                              "Only silu is supported for now.")
-
-        self.gate = ReplicatedLinear(config.hidden_size,
-                                     config.n_routed_experts,
-                                     bias=False,
-                                     quant_config=None,
-                                     prefix=f"{prefix}.gate")
+        if hasattr(config,'carved') and config.carved==1:
+            self.gate = RouterCompoundFast(config,prefix=f"{prefix}.gate") 
+            custom_routing_function = self.gate
+            self.forward = self._forward_cpx
+        else:
+            self.gate = ReplicatedLinear(config.hidden_size,
+                                config.n_routed_experts,
+                                bias=False,
+                                quant_config=None,
+                                prefix=f"{prefix}.gate")
+            custom_routing_function = None
+            self.forward = self._forward_ori
         if config.topk_method == "noaux_tc":
             self.gate.e_score_correction_bias = nn.Parameter(
                 torch.empty(config.n_routed_experts))
@@ -128,12 +136,13 @@ class DeepseekV2MoE(nn.Module):
             reduce_results=False,
             renormalize=config.norm_topk_prob,
             quant_config=quant_config,
-            use_grouped_topk=True,
+            use_grouped_topk=False if hasattr(config,'carved') and config.carved==1 else True,
             num_expert_group=config.n_group,
             topk_group=config.topk_group,
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
-            e_score_correction_bias=self.gate.e_score_correction_bias)
+            e_score_correction_bias=self.gate.e_score_correction_bias,
+            custom_routing_function=custom_routing_function)
 
         if config.n_shared_experts is not None:
             intermediate_size = (config.moe_intermediate_size *
@@ -148,7 +157,46 @@ class DeepseekV2MoE(nn.Module):
                 prefix=f"{prefix}.shared_experts",
             )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _forward_cpx(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        num_tokens, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        if self.n_shared_experts is not None:
+            shared_output = self.shared_experts(hidden_states)
+        # router_logits: (num_tokens, n_experts)
+        # router_logits, router_weights = self.gate(hidden_states) 
+
+        # nvtx_tag = (
+        #     f"MoE_forward. B:{num_tokens} Topk:{self.experts.top_k}"
+        # )
+        # nvtx.range_push(nvtx_tag)
+        if hidden_states.dtype != torch.float16:
+            final_hidden_states = self.experts(
+                hidden_states=hidden_states,
+                router_logits=None,) * self.routed_scaling_factor
+        else:
+            # Fix FP16 overflow
+            # See DeepseekV2DecoderLayer for more details.
+            final_hidden_states = self.experts(hidden_states=hidden_states,
+                                               router_logits=None,)
+        # nvtx.range_pop()    
+        
+        if shared_output is not None:
+            if hidden_states.dtype != torch.float16:
+                final_hidden_states = final_hidden_states + shared_output
+            else:
+                # Fix FP16 overflow
+                # See DeepseekV2DecoderLayer for more details.
+                final_hidden_states = final_hidden_states + shared_output \
+                    * (1. / self.routed_scaling_factor)
+
+        if self.tp_size > 1:
+            final_hidden_states = (
+                self.experts.maybe_all_reduce_tensor_model_parallel(
+                    final_hidden_states))
+
+        return final_hidden_states.view(num_tokens, hidden_dim)
+
+    def _forward_ori(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.n_shared_experts is not None:

@@ -323,10 +323,10 @@ class RouterCompoundFast(nn.Module):
         # masked_weights = torch.where(mask, expanded_weights, torch.full_like(expanded_weights,-10000)).view(bs,-1)
         # final_weights,_ = torch.topk(masked_weights,k=total_activated_experts,dim=-1)
 
-        if self.deepseek_style:
-            return final_ids, final_weights, None
-        else:
-            return final_weights, final_ids
+        # if self.deepseek_style:
+        #     return final_ids, final_weights, None
+        # else:
+        return final_weights, final_ids
 
     def forward_in2(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         #不行，太痛苦了
