@@ -136,6 +136,10 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.shared_expert_gate = torch.nn.Linear(config.hidden_size,
                                                   1,
                                                   bias=False)
+        if hasattr(config,'routed_scaling_factor'):
+            self.routed_scaling_factor = config.routed_scaling_factor 
+        else:
+            self.routed_scaling_factor = 1.0
 
         # self.prefix = prefix
         # self.expert_activations_cache = []
@@ -161,7 +165,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         # self.expert_activations_cache.append(xx.cpu())
 
         final_hidden_states = self.experts(hidden_states=hidden_states,
-                                           router_logits=router_logits)
+                                           router_logits=router_logits)*self.routed_scaling_factor
         if shared_output is not None:
             final_hidden_states = final_hidden_states + shared_output
         if self.tp_size > 1:

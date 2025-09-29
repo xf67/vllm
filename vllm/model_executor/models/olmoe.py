@@ -48,6 +48,9 @@ from .utils import (AutoWeightsLoader, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 
+from .aa_jumped_topk import my_fused_topk,ori_fused_topk
+from .aa_carved_model import RouterCompoundFast
+
 logger = init_logger(__name__)
 
 
@@ -61,6 +64,7 @@ class OlmoeMoE(nn.Module):
     """
 
     def __init__(self,
+                 config: PretrainedConfig,
                  num_experts: int,
                  top_k: int,
                  hidden_size: int,
@@ -69,16 +73,24 @@ class OlmoeMoE(nn.Module):
                  quant_config: Optional[QuantizationConfig] = None,
                  tp_size: Optional[int] = None,
                  routed_scaling_factor: int = 1.0,
+                 use_list: bool = False,
                  prefix: str = ""):
         super().__init__()
         self.hidden_size = hidden_size
         self.routed_scaling_factor = routed_scaling_factor
 
         # Gate always runs at half / full precision for now.
-        self.gate = ReplicatedLinear(hidden_size,
+        if hasattr(config,'carved') and config.carved==1:
+            self.gate = RouterCompoundFast(config,prefix=f"{prefix}.gate") 
+            custom_routing_function = self.gate
+            self.forward = self._forward_cpx
+        else:
+            self.gate = ReplicatedLinear(hidden_size,
                                      num_experts,
                                      bias=False,
                                      quant_config=None)
+            custom_routing_function = my_fused_topk if (not (top_k%4)) and use_list else None
+            self.forward = self._forward_ori
 
         self.experts = FusedMoE(num_experts=num_experts,
                                 top_k=top_k,
@@ -88,17 +100,34 @@ class OlmoeMoE(nn.Module):
                                 renormalize=False,
                                 quant_config=quant_config,
                                 tp_size=tp_size,
-                                prefix=f"{prefix}.experts")
+                                prefix=f"{prefix}.experts",
+                                custom_routing_function=custom_routing_function
+                                )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _forward_ori(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # NOTE: hidden_states can have either 1D or 2D shape.
         orig_shape = hidden_states.shape
         hidden_dim = hidden_states.shape[-1]
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
-        final_hidden_states = self.experts(hidden_states=hidden_states,
+        final_hidden_states = self.experts.forward_impl(hidden_states=hidden_states,
                                            router_logits=router_logits)*self.routed_scaling_factor
+        # final_hidden_states = self.experts(hidden_states=hidden_states,
+        #                             router_logits=router_logits)*self.routed_scaling_factor
+        return final_hidden_states.view(orig_shape)
+    
+    def _forward_cpx(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # NOTE: hidden_states can have either 1D or 2D shape.
+        orig_shape = hidden_states.shape
+        hidden_dim = hidden_states.shape[-1]
+        hidden_states = hidden_states.view(-1, hidden_dim)
+        # router_logits: (num_tokens, n_experts)
+        # router_logits, _ = self.gate(hidden_states)
+        final_hidden_states = self.experts.forward_impl(hidden_states=hidden_states,
+                                           router_logits=None)*self.routed_scaling_factor
+        # final_hidden_states = self.experts(hidden_states=hidden_states,
+        #                             router_logits=router_logits)*self.routed_scaling_factor
         return final_hidden_states.view(orig_shape)
 
 
@@ -235,12 +264,14 @@ class OlmoeDecoderLayer(nn.Module):
         except:
             routed_scaling_factor=1.0
         self.mlp = OlmoeMoE(
+            config=config,
             num_experts=config.num_experts,
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             quant_config=quant_config,
             routed_scaling_factor=routed_scaling_factor,
+            use_list=config.use_list if hasattr(config, 'use_list') else False,
             prefix=f"{prefix}.mlp",
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=1e-5)

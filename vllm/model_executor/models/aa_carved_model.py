@@ -169,8 +169,16 @@ except ImportError:
 class RouterCompoundFast(nn.Module):
     def __init__(self, config, prefix="gate"):
         super().__init__()
-        self.norm_topk_prob: bool = True
-        self.n_routed_experts = config.n_routed_experts
+        if hasattr(config,"use_mapping") and config.use_mapping:
+            dropped_num=config.dropped_num
+        else:
+            dropped_num=0
+        if hasattr(config,"n_routed_experts"):
+            self.n_routed_experts = (config.n_routed_experts+dropped_num)//config.inner_num #deepseek
+        elif hasattr(config,"num_experts"):
+            self.n_routed_experts = (config.num_experts+dropped_num)//config.inner_num #qwen,olmoe
+        else:
+            raise(KeyError, "num experts not found")
         self.norm_topk_prob = config.norm_topk_prob
         self.gating_dim = config.hidden_size
         self.out_gate_weight = nn.Parameter(
@@ -315,10 +323,10 @@ class RouterCompoundFast(nn.Module):
         # masked_weights = torch.where(mask, expanded_weights, torch.full_like(expanded_weights,-10000)).view(bs,-1)
         # final_weights,_ = torch.topk(masked_weights,k=total_activated_experts,dim=-1)
 
-        if self.deepseek_style:
-            return final_ids, final_weights, None
-        else:
-            return final_weights, final_ids
+        # if self.deepseek_style:
+        #     return final_ids, final_weights, None
+        # else:
+        return final_weights, final_ids
 
     def forward_in2(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         #不行，太痛苦了
