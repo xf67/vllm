@@ -61,7 +61,6 @@ from .utils import (AutoWeightsLoader, extract_layer_index,
 
 logger = init_logger(__name__)
 
-
 class Qwen2MoeMLP(nn.Module):
 
     def __init__(
@@ -142,6 +141,9 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         else:
             self.routed_scaling_factor = 1.0
 
+        # self.prefix = prefix
+        # self.expert_activations_cache = []
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # NOTE: hidden_states can have either 1D or 2D shape.
         orig_shape = hidden_states.shape
@@ -156,6 +158,12 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
 
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
+
+
+        # _,xx=torch.topk(router_logits,4)
+        # # print( self.prefix, xx )
+        # self.expert_activations_cache.append(xx.cpu())
+
         final_hidden_states = self.experts(hidden_states=hidden_states,
                                            router_logits=router_logits)*self.routed_scaling_factor
         if shared_output is not None:
