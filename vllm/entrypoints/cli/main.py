@@ -14,6 +14,24 @@ logger = init_logger(__name__)
 
 
 def main():
+    import debugpy, os, time
+    # Start the debugger only in the rank 0 process
+    if int(os.environ.get('LOCAL_RANK', '0')) == 0 and int(os.environ.get('RUN_DEBUG_PORT', '0')) !=0:
+        debugpy.connect(int(os.environ.get('RUN_DEBUG_PORT', '0'))) 
+        print("Waiting for debugger to attach...")
+        debugpy.wait_for_client()
+        print("Debugger attached! Continuing execution...")
+        main2()
+    else:
+        try:
+            main2()
+        except Exception as e:
+            print("rank {} failed -> {}".format(int(os.environ.get('LOCAL_RANK', '0')), e))
+            time.sleep(9999999)
+
+
+
+def main2():
     import vllm.entrypoints.cli.benchmark.main
     import vllm.entrypoints.cli.collect_env
     import vllm.entrypoints.cli.openai
