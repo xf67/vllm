@@ -692,12 +692,13 @@ async def benchmark(
                 for rps_val in range(last_int_rps + 1, current_int_rps + 1):
                     rps_change_events.append({"rps": rps_val, "timestamp": timestamp})
                 last_int_rps = current_int_rps
-        prompt, prompt_len, output_len, mm_content, request_id = (
+        prompt, prompt_len, output_len, mm_content, request_id, k_qos = (
             request.prompt,
             request.prompt_len,
             request.expected_output_len,
             request.multi_modal_data,
             request.request_id,
+            request.k_qos
         )
         req_model_id, req_model_name = model_id, model_name
         if lora_modules:
@@ -717,6 +718,7 @@ async def benchmark(
             extra_headers=extra_headers,
             extra_body=extra_body,
             request_id=request_id,
+            k_qos=k_qos
         )
         tasks.append(
             asyncio.create_task(

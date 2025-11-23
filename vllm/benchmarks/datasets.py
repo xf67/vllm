@@ -12,6 +12,9 @@ generation. Supported dataset types include:
   - VisionArena
 """
 
+
+import os
+
 import argparse
 import ast
 import base64
@@ -82,6 +85,7 @@ class SampleRequest:
     multi_modal_data: MultiModalDataDict | dict | list[dict] | None = None
     lora_request: LoRARequest | None = None
     request_id: str | None = None
+    k_qos: int | None = None
 
 
 # -----------------------------------------------------------------------------
@@ -152,6 +156,22 @@ class BenchmarkDataset(ABC):
         """
         # TODO (jenniferzhao): add support for downloading data
         raise NotImplementedError("load_data must be implemented in subclasses.")
+
+    def get_random_kqos(
+        self,
+        mean: float,
+        std: float,
+        num_experts: int
+    ) -> int:
+        """
+        Get K-Qos, sample from normal distribution
+        输入均值和标准差, 以及当前模型最多能有多少experts
+        """
+        if std < 0:
+            raise ValueError("std should >0 for normal distribution")
+        sample = np.random.normal(loc=mean, scale=std)
+        k = round(sample)
+        return min(max(1, k),num_experts)
 
     def get_random_lora_request(
         self,
@@ -1254,6 +1274,11 @@ class ShareGPTDataset(BenchmarkDataset):
             lora_request = self.get_random_lora_request(
                 max_loras=max_loras, lora_path=lora_path
             )
+            k_rand = self.get_random_kqos(
+                mean=float(os.environ.get("QOS_K_MEAN",4.0)),
+                std=float(os.environ.get("QOS_K_STD",1.0)),
+                num_experts=int(os.environ.get("QOS_K_MAX",32))
+            )
             prompt_ids = tokenizer(prompt).input_ids
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)
@@ -1280,6 +1305,7 @@ class ShareGPTDataset(BenchmarkDataset):
                     lora_request=lora_request,
                     multi_modal_data=mm_content,
                     request_id=request_id_prefix + str(ind),
+                    k_qos=k_rand,
                 )
             )
             ind += 1

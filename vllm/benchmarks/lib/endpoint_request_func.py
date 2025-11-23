@@ -77,6 +77,7 @@ class RequestFuncInput:
     ignore_eos: bool = False
     language: str | None = None
     request_id: str | None = None
+    k_qos: int | None = None
 
 
 @dataclass
@@ -168,6 +169,7 @@ async def async_request_openai_completions(
         "stream_options": {
             "include_usage": True,
         },
+        "k_qos": request_func_input.k_qos,
     }
     _update_payload_common(payload, request_func_input)
 

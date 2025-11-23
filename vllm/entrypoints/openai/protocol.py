@@ -1271,6 +1271,8 @@ class CompletionRequest(OpenAIBaseModel):
 
     # --8<-- [end:completion-extra-params]
 
+    k_qos: int | None = None
+
     # Default sampling parameters for completion requests
     _DEFAULT_SAMPLING_PARAMS: dict = {
         "repetition_penalty": 1.0,
