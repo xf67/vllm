@@ -155,6 +155,13 @@ class InputBatch:
         self.greedy_reqs: set[str] = set()
         self.random_reqs: set[str] = set()
 
+        self.k_qos = torch.empty((max_num_reqs,), dtype=torch.int32, device=device)
+        self.k_qos_cpu_tensor = torch.empty(
+            (max_num_reqs,), dtype=torch.int32, device="cpu", pin_memory=pin_memory
+        )
+        self.k_qos_cpu = self.k_qos_cpu_tensor.numpy()
+        self.k_qos_reqs: set[str] = set()
+
         self.top_p = torch.empty((max_num_reqs,), dtype=torch.float32, device=device)
         self.top_p_cpu_tensor = torch.empty(
             (max_num_reqs,), dtype=torch.float32, device="cpu", pin_memory=pin_memory
@@ -353,6 +360,10 @@ class InputBatch:
                 self.temperature_cpu[req_index] = sampling_params.temperature
                 self.random_reqs.add(req_id)
 
+            if 'k_qos' in sampling_params.extra_args:
+                self.k_qos_cpu[req_index] = sampling_params.extra_args['k_qos']
+                self.k_qos_reqs.add(req_id)
+
             self.top_p_cpu[req_index] = sampling_params.top_p
             if sampling_params.top_p < 1:
                 self.top_p_reqs.add(req_id)
@@ -481,6 +492,7 @@ class InputBatch:
         self.greedy_reqs.discard(req_id)
         self.random_reqs.discard(req_id)
         self.top_p_reqs.discard(req_id)
+        self.k_qos_reqs.discard(req_id)
         self.top_k_reqs.discard(req_id)
         self.spec_decode_unsupported_reqs.discard(req_id)
         self.frequency_penalties_reqs.discard(req_id)
@@ -576,6 +588,7 @@ class InputBatch:
         )
         self.top_p_cpu[i1], self.top_p_cpu[i2] = self.top_p_cpu[i2], self.top_p_cpu[i1]
         self.top_k_cpu[i1], self.top_k_cpu[i2] = self.top_k_cpu[i2], self.top_k_cpu[i1]
+        self.k_qos_cpu[i1], self.k_qos_cpu[i2] = self.k_qos_cpu[i2], self.k_qos_cpu[i1]
         self.frequency_penalties_cpu[i1], self.frequency_penalties_cpu[i2] = (
             self.frequency_penalties_cpu[i2],
             self.frequency_penalties_cpu[i1],
@@ -697,6 +710,7 @@ class InputBatch:
             self.temperature_cpu[empty_index] = self.temperature_cpu[last_req_index]
             self.top_p_cpu[empty_index] = self.top_p_cpu[last_req_index]
             self.top_k_cpu[empty_index] = self.top_k_cpu[last_req_index]
+            self.k_qos[empty_index] = self.k_qos_cpu[last_req_index]
             self.frequency_penalties_cpu[empty_index] = self.frequency_penalties_cpu[
                 last_req_index
             ]
@@ -761,6 +775,8 @@ class InputBatch:
             copy_slice(self.top_p_cpu_tensor, self.top_p, num_reqs)
         if not self.no_top_k:
             copy_slice(self.top_k_cpu_tensor, self.top_k, num_reqs)
+        if not self.no_k_qos:
+            copy_slice(self.k_qos_cpu_tensor, self.k_qos, num_reqs)
 
         if not self.no_penalties:
             # Since syncing these tensors is expensive only copy them
@@ -831,6 +847,7 @@ class InputBatch:
             allowed_token_ids_mask=allowed_token_ids_mask,
             bad_words_token_ids=self.bad_words_token_ids,
             logitsprocs=self.logitsprocs,
+            k_qos=None if self.no_k_qos else self.k_qos[:num_reqs]
         )
 
     def get_pooling_params(self) -> list[PoolingParams]:
@@ -949,6 +966,10 @@ class InputBatch:
     @property
     def no_top_p(self) -> bool:
         return len(self.top_p_reqs) == 0
+    
+    @property
+    def no_k_qos(self) -> bool:
+        return len(self.k_qos_reqs) == 0
 
     @property
     def no_top_k(self) -> bool:

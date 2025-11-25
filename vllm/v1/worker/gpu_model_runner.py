@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
+import os
 import gc
 import itertools
 import time
@@ -457,6 +457,7 @@ class GPUModelRunner(
         self.query_start_loc = self._make_buffer(
             self.max_num_reqs + 1, dtype=torch.int32
         )
+        self.k_qos = self._make_buffer(self.max_num_reqs, dtype=torch.int32)
         self.seq_lens = self._make_buffer(self.max_num_reqs, dtype=torch.int32)
         if self.dcp_world_size > 1:
             self.dcp_local_seq_lens = self._make_buffer(
@@ -601,11 +602,14 @@ class GPUModelRunner(
 
     def _init_model_kwargs(self, num_tokens: int):
         model_kwargs = dict[str, Any]()
+        num_reqs = self.input_batch.num_reqs
 
+        k_qos = self.k_qos.gpu[:num_reqs]
+        model_kwargs['k_qos'] = k_qos
         if not self.is_pooling_model:
             return model_kwargs
 
-        num_reqs = self.input_batch.num_reqs
+        
         pooling_params = self.input_batch.get_pooling_params()
 
         token_type_id_requests = dict[int, Any]()
@@ -1312,6 +1316,10 @@ class GPUModelRunner(
         # Fill unused with 0 for full cuda graph mode.
         self.seq_lens.np[num_reqs:].fill(0)
         self.seq_lens.copy_to_gpu()
+        self.k_qos.np[:num_reqs] = self.input_batch.k_qos_cpu[:num_reqs]
+        self.k_qos.np[num_reqs:].fill(0)
+        self.k_qos.copy_to_gpu()
+
 
         num_tokens = [self.requests[r].num_tokens for r in self.input_batch.req_ids]
         num_tokens_np = np.array(num_tokens, dtype=np.int32)
@@ -2320,7 +2328,7 @@ class GPUModelRunner(
         ec_connector_output = None
 
         if (
-            self.supports_mm_inputs
+            self.supports_mm_inputs #False
             and is_first_rank
             and not self.model_config.is_encoder_decoder
         ):
@@ -2350,7 +2358,7 @@ class GPUModelRunner(
                 **self._init_model_kwargs(num_scheduled_tokens),
                 **self._extract_mm_kwargs(scheduler_output),
             }
-        elif self.enable_prompt_embeds and is_first_rank:
+        elif self.enable_prompt_embeds and is_first_rank: # False
             # Get the input embeddings for the tokens that are not input embeds,
             # then put them into the appropriate positions.
             # TODO(qthequartermasterman): Since even when prompt embeds are
@@ -2382,10 +2390,10 @@ class GPUModelRunner(
             # While it is possible to use embeddings as input just like the
             # multimodal models, it is not desirable for performance since
             # then the embedding layer is not included in the CUDA graph.
-            input_ids = self.input_ids.gpu[:num_input_tokens]
+            input_ids = self.input_ids.gpu[:num_input_tokens] # 很奇妙
             inputs_embeds = None
             model_kwargs = self._init_model_kwargs(num_input_tokens)
-        if self.uses_mrope:
+        if self.uses_mrope: # False
             positions = self.mrope_positions.gpu[:, :num_input_tokens]
         else:
             positions = self.positions.gpu[:num_input_tokens]
@@ -2398,7 +2406,7 @@ class GPUModelRunner(
             )
 
         if (
-            self.model_config.is_encoder_decoder
+            self.model_config.is_encoder_decoder # False
             and scheduler_output.scheduled_encoder_inputs
         ):
             encoder_inputs = self._extract_encoder_inputs(scheduler_output)
@@ -3748,6 +3756,9 @@ class GPUModelRunner(
             self.seq_lens.np[:num_reqs] = seq_lens
             self.seq_lens.np[num_reqs:] = 0
             self.seq_lens.copy_to_gpu()
+            self.k_qos.np[:num_reqs] = int(os.environ.get("QOS_K_MAX",32))
+            self.k_qos.np[num_reqs:] = 0
+            self.k_qos.copy_to_gpu()
 
             cum_num_tokens, _ = self._get_cumsum_and_arange(num_scheduled_tokens)
             self.query_start_loc.np[1 : num_reqs + 1] = cum_num_tokens

@@ -1372,6 +1372,7 @@ class CompletionRequest(OpenAIBaseModel):
                 self.structured_outputs = StructuredOutputsParams(**kwargs)
 
         extra_args: dict[str, Any] = self.vllm_xargs if self.vllm_xargs else {}
+        extra_args['k_qos'] = self.k_qos
         if self.kv_transfer_params:
             # Pass in kv_transfer_params via extra_args
             extra_args["kv_transfer_params"] = self.kv_transfer_params

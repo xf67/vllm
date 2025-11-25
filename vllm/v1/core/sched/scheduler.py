@@ -198,6 +198,8 @@ class Scheduler(SchedulerInterface):
         # chunked prefills, prefix caching, speculative decoding,
         # and the "jump decoding" optimization in the future.
 
+        # request.sampling_params.extra_args['k_qos'] 以获取k_qos
+
         scheduled_new_reqs: list[Request] = []
         scheduled_resumed_reqs: list[Request] = []
         scheduled_running_reqs: list[Request] = []
@@ -676,7 +678,7 @@ class Scheduler(SchedulerInterface):
         self.prev_step_scheduled_req_ids.update(num_scheduled_tokens.keys())
 
         scheduler_output = SchedulerOutput(
-            scheduled_new_reqs=new_reqs_data,
+            scheduled_new_reqs=new_reqs_data, # 含sampling params，即带上了k_qos
             scheduled_cached_reqs=cached_reqs_data,
             num_scheduled_tokens=num_scheduled_tokens,
             total_num_scheduled_tokens=total_num_scheduled_tokens,

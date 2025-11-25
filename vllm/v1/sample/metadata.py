@@ -42,3 +42,5 @@ class SamplingMetadata:
 
     # Speculative token ids
     spec_token_ids: list[list[int]] | None = None
+
+    k_qos: torch.Tensor | None = None
