@@ -360,9 +360,15 @@ class InputBatch:
                 self.temperature_cpu[req_index] = sampling_params.temperature
                 self.random_reqs.add(req_id)
 
-            if 'k_qos' in sampling_params.extra_args:
-                self.k_qos_cpu[req_index] = sampling_params.extra_args['k_qos']
+            if sampling_params.extra_args and 'k_qos' in sampling_params.extra_args.keys():
+                if not sampling_params.extra_args['k_qos']:
+                    self.k_qos_cpu[req_index] = -1
+                else:
+                    self.k_qos_cpu[req_index] = sampling_params.extra_args['k_qos']
                 self.k_qos_reqs.add(req_id)
+            #     print(f"[DDDBUG] k_qos find in gpu_input_batch: {self.k_qos_cpu[req_index]}")
+            # else:
+            #     print("[DDDBUG] cannot find k_qos")
 
             self.top_p_cpu[req_index] = sampling_params.top_p
             if sampling_params.top_p < 1:
