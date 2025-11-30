@@ -101,16 +101,24 @@ class OlmoeMoE(nn.Module):
             prefix=f"{prefix}.experts",
         )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        self.num_experts = num_experts
+
+    def forward(self, hidden_states: torch.Tensor, k_qos: int | None) -> torch.Tensor:
         # NOTE: hidden_states can have either 1D or 2D shape.
         orig_shape = hidden_states.shape
         hidden_dim = hidden_states.shape[-1]
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
+        if k_qos is not None and k_qos>0:
+            assert k_qos<self.num_experts
+            top_k_buff = self.experts.top_k
+            self.experts.top_k = k_qos
         final_hidden_states = self.experts(
             hidden_states=hidden_states, router_logits=router_logits
         )
+        if k_qos is not None and k_qos>0:
+            self.experts.top_k = top_k_buff
         return final_hidden_states.view(orig_shape)
 
 
@@ -247,6 +255,7 @@ class OlmoeDecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
+        k_qos: int | None,
     ) -> torch.Tensor:
         # Self Attention
         if residual is None:
@@ -262,7 +271,7 @@ class OlmoeDecoderLayer(nn.Module):
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+        hidden_states = self.mlp(hidden_states,k_qos)
         return hidden_states, residual
 
 
@@ -305,6 +314,7 @@ class OlmoeModel(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None,
         inputs_embeds: torch.Tensor | None = None,
+        k_qos: int | None = None,
     ) -> torch.Tensor | IntermediateTensors:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -317,11 +327,13 @@ class OlmoeModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
+        print(f"[DDDBUG] In model forward {hidden_states.shape},{k_qos}")
         for layer in islice(self.layers, self.start_layer, self.end_layer):
             hidden_states, residual = layer(
                 positions,
                 hidden_states,
                 residual,
+                k_qos
             )
 
         if not get_pp_group().is_last_rank:
@@ -482,8 +494,13 @@ class OlmoeForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
         inputs_embeds: torch.Tensor | None = None,
         **kwargs
     ) -> torch.Tensor | IntermediateTensors:
+        try:
+            k_qos = kwargs['k_qos']
+        except:
+            print("[DDDBUG] k_qos not found")
+            k_qos = -1
         hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
+            input_ids, positions, intermediate_tensors, inputs_embeds, k_qos
         )
         return hidden_states
 

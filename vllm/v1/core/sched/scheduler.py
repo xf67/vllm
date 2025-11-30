@@ -46,6 +46,8 @@ from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
 
+import os
+
 logger = init_logger(__name__)
 
 
@@ -185,6 +187,8 @@ class Scheduler(SchedulerInterface):
             dcp_world_size=self.dcp_world_size,
         )
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
+
+        self.qos_aware = int(os.environ.get('QOS_AWARE', '0')) # 0 for qos_agnostic, 1 for qos_eager, 2 for virtual_queue
 
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
