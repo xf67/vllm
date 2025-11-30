@@ -700,6 +700,7 @@ async def benchmark(
             request.request_id,
             request.k_qos
         )
+        print(f"[DDDBUG] k_qos at server.py at get_request {request.k_qos}")
         req_model_id, req_model_name = model_id, model_name
         if lora_modules:
             req_lora_module = next(lora_modules)
@@ -720,6 +721,7 @@ async def benchmark(
             request_id=request_id,
             k_qos=k_qos
         )
+        print(f"[DDDBUG] k_qos at server.py at RequestFuncInput: {k_qos}")
         tasks.append(
             asyncio.create_task(
                 limited_request_func(
