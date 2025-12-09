@@ -716,7 +716,7 @@ class InputBatch:
             self.temperature_cpu[empty_index] = self.temperature_cpu[last_req_index]
             self.top_p_cpu[empty_index] = self.top_p_cpu[last_req_index]
             self.top_k_cpu[empty_index] = self.top_k_cpu[last_req_index]
-            self.k_qos[empty_index] = self.k_qos_cpu[last_req_index]
+            self.k_qos_cpu[empty_index] = self.k_qos_cpu[last_req_index]
             self.frequency_penalties_cpu[empty_index] = self.frequency_penalties_cpu[
                 last_req_index
             ]
