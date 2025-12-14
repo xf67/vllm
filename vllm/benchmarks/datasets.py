@@ -1274,11 +1274,14 @@ class ShareGPTDataset(BenchmarkDataset):
             lora_request = self.get_random_lora_request(
                 max_loras=max_loras, lora_path=lora_path
             )
-            k_rand = self.get_random_kqos(
-                mean=float(os.environ.get("QOS_K_MEAN",4.0)),
-                std=float(os.environ.get("QOS_K_STD",1.0)),
-                num_experts=int(os.environ.get("QOS_K_MAX",32))
-            )
+            if int(os.environ.get("STATIC_QOS",-1))==-1:
+                k_rand = self.get_random_kqos(
+                    mean=float(os.environ.get("QOS_K_MEAN",4.0)),
+                    std=float(os.environ.get("QOS_K_STD",1.0)),
+                    num_experts=int(os.environ.get("QOS_K_MAX",32))
+                )
+            else:
+                k_rand = os.environ.get("STATIC_QOS",6)
             prompt_ids = tokenizer(prompt).input_ids
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)

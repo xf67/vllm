@@ -604,7 +604,7 @@ class GPUModelRunner(
         model_kwargs = dict[str, Any]()
         num_reqs = self.input_batch.num_reqs
 
-        if int(os.environ.get('QOS_AWARE',0))>0:
+        if int(os.environ.get('QOS_AWARE',1))>0:
             try:
                 k_qos = self.k_qos.np[:num_reqs].max().item()
                 print(f"[DDDBUG] working k_qos is {self.k_qos.np[:num_reqs]} ")
