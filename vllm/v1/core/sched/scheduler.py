@@ -423,22 +423,22 @@ class Scheduler(SchedulerInterface):
                 request = self.waiting.peek_request()
                 req_k = request.sampling_params.extra_args.get('k_qos', 0)
 
-                allow_admission = True
                 if self.qos_aware:
+                    allow_admission = True
                     if dominant_k > 0:
                         if req_k > dominant_k:
                             allow_admission = False
-                STARVATION_TIMEOUT = float(os.environ.get("STARVATION_TIMEOUT",0.0))
-                if (time.time() - request.arrival_time) > STARVATION_TIMEOUT:
-                    allow_admission = True
-                MIN_CONCURRENCY = int(os.environ.get("MIN_CONCURRENCY",8))
-                if len(self.running) < MIN_CONCURRENCY:
-                    allow_admission = True
-                
-                if not allow_admission:
-                    self.waiting.pop_request()
-                    skipped_waiting_requests.prepend_request(request)
-                    continue
+                    STARVATION_TIMEOUT = float(os.environ.get("STARVATION_TIMEOUT",0.0))
+                    if (time.time() - request.arrival_time) > STARVATION_TIMEOUT:
+                        allow_admission = True
+                    MIN_CONCURRENCY = int(os.environ.get("MIN_CONCURRENCY",8))
+                    if len(self.running) < MIN_CONCURRENCY:
+                        allow_admission = True
+                    
+                    if not allow_admission:
+                        self.waiting.pop_request()
+                        skipped_waiting_requests.prepend_request(request)
+                        continue
 
 
                 # KVTransfer: skip request if still waiting for remote kvs.
