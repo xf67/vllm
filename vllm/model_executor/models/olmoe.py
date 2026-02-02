@@ -327,7 +327,7 @@ class OlmoeModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        print(f"[DDDBUG] In model forward {hidden_states.shape},{k_qos}")
+        # print(f"[DDDBUG] In model forward {hidden_states.shape},{k_qos}") # if cuda_graph, should comment this
         for layer in islice(self.layers, self.start_layer, self.end_layer):
             hidden_states, residual = layer(
                 positions,
@@ -497,8 +497,9 @@ class OlmoeForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
         try:
             k_qos = kwargs['k_qos']
         except:
-            print("[DDDBUG] k_qos not found")
+            # print("[DDDBUG] k_qos not found")
             k_qos = -1
+        # print(f"[DDDBUG] k is {k_qos}")
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds, k_qos
         )

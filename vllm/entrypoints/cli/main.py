@@ -27,7 +27,7 @@ def main():
             main2()
         except Exception as e:
             print("rank {} failed -> {}".format(int(os.environ.get('LOCAL_RANK', '0')), e))
-            time.sleep(9999999)
+            # time.sleep(9999999)
 
 
 

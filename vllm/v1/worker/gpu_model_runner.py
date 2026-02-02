@@ -607,9 +607,9 @@ class GPUModelRunner(
         if int(os.environ.get('QOS_AWARE',1))>0:
             try:
                 k_qos = self.k_qos.np[:num_reqs].max().item()
-                print(f"[DDDBUG] working k_qos is {self.k_qos.np[:num_reqs]} ")
+                # print(f"[DDDBUG] working k_qos is {self.k_qos.np[:num_reqs]} ")
             except:
-                print("[DDDBUG] k_qos not found")
+                # print("[DDDBUG] k_qos not found")
                 k_qos=-1
             model_kwargs['k_qos'] = k_qos
         if not self.is_pooling_model:

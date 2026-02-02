@@ -171,7 +171,7 @@ async def async_request_openai_completions(
         },
         "k_qos": request_func_input.k_qos,
     }
-    print(f"[DDDBUG] k_qos at endpoint_.py in playload: {request_func_input.k_qos}")
+    # print(f"[DDDBUG] k_qos at endpoint_.py in playload: {request_func_input.k_qos}")
     _update_payload_common(payload, request_func_input)
 
     headers = {
