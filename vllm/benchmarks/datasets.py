@@ -530,6 +530,15 @@ class RandomDataset(BenchmarkDataset):
         requests = []
         token_mismatch_total = 0
         for i in range(num_requests):
+            if int(os.environ.get("STATIC_QOS",-1))==-1:
+                k_rand = self.get_random_kqos(
+                    mean=float(os.environ.get("QOS_K_MEAN",4.0)),
+                    std=float(os.environ.get("QOS_K_STD",1.0)),
+                    num_experts=int(os.environ.get("QOS_K_MAX",32))
+                )
+            else:
+                k_rand = os.environ.get("STATIC_QOS",6)
+            # print(f"[DDDBUG] k_rand: {k_rand}")
             prompt, total_input_len, token_mismatch = self.generate_token_sequence(  # noqa: E501
                 tokenizer=tokenizer,
                 prefix_token_ids=prefix_token_ids,
@@ -547,6 +556,7 @@ class RandomDataset(BenchmarkDataset):
                     prompt_len=total_input_len,
                     expected_output_len=int(output_lens[i]),
                     request_id=request_id_prefix + str(i),
+                    k_qos=k_rand,
                 )
             )
         # only used for embeddings benchmark.
@@ -554,6 +564,15 @@ class RandomDataset(BenchmarkDataset):
             batch_requests = []
             # Create batched requests
             for i in range(0, num_requests, batchsize):
+                if int(os.environ.get("STATIC_QOS",-1))==-1:
+                    k_rand = self.get_random_kqos(
+                        mean=float(os.environ.get("QOS_K_MEAN",4.0)),
+                        std=float(os.environ.get("QOS_K_STD",1.0)),
+                        num_experts=int(os.environ.get("QOS_K_MAX",32))
+                    )
+                else:
+                    k_rand = os.environ.get("STATIC_QOS",6)
+                # print(f"[DDDBUG] k_rand: {k_rand}")
                 batch = requests[i : i + batchsize]
                 batch_requests.append(
                     SampleRequest(
@@ -561,6 +580,7 @@ class RandomDataset(BenchmarkDataset):
                         prompt_len=sum(req.prompt_len for req in batch),
                         expected_output_len=0,
                         request_id=request_id_prefix + str(i // batchsize),
+                        k_qos=k_rand,
                     )
                 )
             requests = batch_requests
@@ -1282,6 +1302,7 @@ class ShareGPTDataset(BenchmarkDataset):
                 )
             else:
                 k_rand = os.environ.get("STATIC_QOS",6)
+            # print(f"[DDDBUG] k_rand: {k_rand}")
             prompt_ids = tokenizer(prompt).input_ids
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)
