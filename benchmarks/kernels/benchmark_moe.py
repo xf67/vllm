@@ -443,7 +443,7 @@ class BenchmarkWorker:
             dtype,
             use_fp8_w8a8,
             use_int8_w8a16,
-            num_iters=100,
+            num_iters=1000,
             block_quant_shape=block_quant_shape,
             use_deep_gemm=use_deep_gemm,
         )
@@ -621,6 +621,11 @@ def main(args: argparse.Namespace):
         topk = config.thinker_config.text_config.num_experts_per_tok
         intermediate_size = config.thinker_config.text_config.moe_intermediate_size
         hidden_size = config.thinker_config.text_config.hidden_size
+    elif config.architectures[0] in ["OlmoeForCausalLM"]:
+        E = config.num_experts
+        topk = config.num_experts_per_tok
+        intermediate_size = config.intermediate_size
+        hidden_size = config.hidden_size
     else:
         # Support for llama4
         config = config.get_text_config()
