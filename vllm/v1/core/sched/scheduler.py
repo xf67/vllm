@@ -49,7 +49,7 @@ from vllm.v1.utils import record_function_or_nullcontext
 import os
 
 logger = init_logger(__name__)
-
+MAJORITY_RATIO = float(os.environ.get("MAJORITY_RATIO",0.8))
 
 class Scheduler(SchedulerInterface):
     def __init__(
@@ -188,7 +188,7 @@ class Scheduler(SchedulerInterface):
         )
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
 
-        self.qos_aware = int(os.environ.get('QOS_AWARE', '1')) # 0 for qos_agnostic, 1 for qos_eager, 2 for virtual_queue
+        self.qos_aware = int(os.environ.get('QOS_AWARE', '1')) # 0 for qos_agnostic, 1 for qos_aware+scheduler, 2 for qos_aware+staticK
 
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
@@ -399,19 +399,20 @@ class Scheduler(SchedulerInterface):
         skipped_waiting_requests = create_request_queue(self.policy)
 
         dominant_k = 0
-        if self.qos_aware and self.running:
+        if self.qos_aware==1 and self.running:
             running_ks = sorted([
                 r.sampling_params.extra_args.get('k_qos', 0) 
                 for r in self.running
             ])
 
-            MAJORITY_RATIO = float(os.environ.get("MAJORITY_RATIO",0.8))
             majority_index = int(len(running_ks) * MAJORITY_RATIO)
             if majority_index >= len(running_ks): majority_index = len(running_ks) - 1
             if majority_index <0 : majority_index = 0
             dominant_k = running_ks[majority_index]
-            print(f"[DDDBUG] dominat_k: {dominant_k}")
-            print(f"[DDDBUG] running list: {running_ks}")
+            if not dominant_k:
+                dominant_k = 0
+            # print(f"[DDDBUG] dominat_k: {dominant_k}")
+            # print(f"[DDDBUG] running list: {running_ks}")
 
 
         # Next, schedule the WAITING requests.
@@ -421,9 +422,9 @@ class Scheduler(SchedulerInterface):
                     break
 
                 request = self.waiting.peek_request()
-                req_k = request.sampling_params.extra_args.get('k_qos', 0)
 
-                if self.qos_aware:
+                if self.qos_aware==1:
+                    req_k = request.sampling_params.extra_args.get('k_qos', 0)
                     allow_admission = True
                     if dominant_k > 0:
                         if req_k > dominant_k:
@@ -439,7 +440,6 @@ class Scheduler(SchedulerInterface):
                         self.waiting.pop_request()
                         skipped_waiting_requests.prepend_request(request)
                         continue
-
 
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
@@ -667,7 +667,7 @@ class Scheduler(SchedulerInterface):
                         self.encoder_cache_manager.allocate(request, i)
                         if self.ec_connector is not None:
                             self.ec_connector.update_state_after_alloc(request, i)
-                if dominant_k == 0: # 在第一次启动的时候需要
+                if self.qos_aware==1 and dominant_k == 0: # 在第一次启动的时候需要
                     dominant_k = req_k
         # Put back any skipped requests at the head of the waiting queue
         if skipped_waiting_requests:
