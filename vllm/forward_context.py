@@ -44,6 +44,7 @@ class BatchDescriptor(NamedTuple):
     """
     Whether this batch has active LoRA adapters.
     """
+    k_qos: int = -1 # add MoE-topk support
 
     @property
     def non_uniform(self) -> "BatchDescriptor":
@@ -51,7 +52,7 @@ class BatchDescriptor(NamedTuple):
         Return a non-uniform version of current batch descriptor.
         """
         return BatchDescriptor(
-            self.num_tokens, uniform_decode=False, has_lora=self.has_lora
+            self.num_tokens, uniform_decode=False, has_lora=self.has_lora, k_qos=self.k_qos 
         )
 
 

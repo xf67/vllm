@@ -64,9 +64,12 @@ class CudagraphDispatcher:
         self.cudagraph_keys[runtime_mode].add(batch_descriptor)
 
     def initialize_cudagraph_keys(
-        self, cudagraph_mode: CUDAGraphMode, uniform_decode_query_len: int
+        self, cudagraph_mode: CUDAGraphMode, uniform_decode_query_len: int, qos_k_list: list[int] | None = None,
     ):
         # This should be called only after attention backend is initialized.
+
+        if qos_k_list is None or len(qos_k_list) == 0:
+            qos_k_list = [self.vllm_config.model_config.get_activated_num_experts()]
 
         # LoRA activation cases to specialize the cuda graphs on
         if self.vllm_config.lora_config:
@@ -81,13 +84,13 @@ class CudagraphDispatcher:
         # guarantee all keys would be used. For example, if we allow lazy
         # capturing in future PR, some keys may never be triggered.
         if cudagraph_mode.mixed_mode() != CUDAGraphMode.NONE:
-            for bs, has_lora in product(
-                self.compilation_config.cudagraph_capture_sizes, lora_cases
+            for bs, has_lora, k_qos in product(
+                self.compilation_config.cudagraph_capture_sizes, lora_cases, qos_k_list
             ):
                 self.add_cudagraph_key(
                     cudagraph_mode.mixed_mode(),
                     BatchDescriptor(
-                        num_tokens=bs, uniform_decode=False, has_lora=has_lora
+                        num_tokens=bs, uniform_decode=False, has_lora=has_lora, k_qos = k_qos
                     ),
                 )
 
@@ -106,11 +109,11 @@ class CudagraphDispatcher:
                 for x in self.compilation_config.cudagraph_capture_sizes
                 if x <= max_num_tokens and x >= uniform_decode_query_len
             ]
-            for bs, has_lora in product(cudagraph_capture_sizes_for_decode, lora_cases):
+            for bs, has_lora, k_qos in product(cudagraph_capture_sizes_for_decode, lora_cases, qos_k_list):
                 self.add_cudagraph_key(
                     CUDAGraphMode.FULL,
                     BatchDescriptor(
-                        num_tokens=bs, uniform_decode=True, has_lora=has_lora
+                        num_tokens=bs, uniform_decode=True, has_lora=has_lora, k_qos=k_qos
                     ),
                 )
         self.keys_initialized = True

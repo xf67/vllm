@@ -448,6 +448,15 @@ class GPUModelRunner(
                 self.compilation_config.cudagraph_capture_sizes
             )
 
+        qos_aware = os.environ.get("QOS_AWARE", "0")
+        qos_k_list_str = os.environ.get("QOS_K_LIST", "-1")
+        qos_k_cases = [int(x) for x in qos_k_list_str.split(",")]
+        # print(vllm_config.model_config)
+        if qos_aware==0 or qos_k_cases[0] == -1:
+            assert len(qos_k_cases) == 1
+            qos_k_cases[0] = vllm_config.model_config.get_activated_num_experts()
+        self.qos_k_cases = qos_k_cases
+
         # Cache the device properties.
         self._init_device_properties()
 
@@ -2779,6 +2788,7 @@ class GPUModelRunner(
                 num_tokens=num_input_tokens,
                 uniform_decode=uniform_decode,
                 has_lora=len(self.input_batch.lora_id_to_lora_request) > 0,
+                k_qos=model_kwargs.get("k_qos", -1),
             )
             cudagraph_runtime_mode, batch_descriptor = (
                 self.cudagraph_dispatcher.dispatch(
@@ -3649,6 +3659,7 @@ class GPUModelRunner(
         create_mixed_batch: bool = False,
         remove_lora: bool = True,
         activate_lora: bool = False,
+        k_qos: int = -1,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run a dummy forward pass to warm up/profile run or capture the
@@ -3762,7 +3773,7 @@ class GPUModelRunner(
             self.seq_lens.np[:num_reqs] = seq_lens
             self.seq_lens.np[num_reqs:] = 0
             self.seq_lens.copy_to_gpu()
-            self.k_qos.np[:num_reqs] = int(os.environ.get("QOS_K_MAX",32))
+            self.k_qos.np[:num_reqs] = k_qos
             self.k_qos.np[num_reqs:] = 0
             self.k_qos.copy_to_gpu()
 
@@ -3803,6 +3814,9 @@ class GPUModelRunner(
                 input_ids = self.input_ids.gpu[:num_tokens_after_padding]
                 inputs_embeds = None
 
+            if k_qos > 0:
+                model_kwargs['k_qos'] = k_qos
+
             if self.uses_mrope:
                 positions = self.mrope_positions.gpu[:, :num_tokens_after_padding]
             else:
@@ -3831,6 +3845,7 @@ class GPUModelRunner(
                         num_tokens=num_tokens_after_padding,
                         uniform_decode=uniform_decode,
                         has_lora=activate_lora and self.lora_config is not None,
+                        k_qos=k_qos,
                     )
                 )
                 if not is_profile
@@ -4213,7 +4228,7 @@ class GPUModelRunner(
                 cudagraph_runtime_mode = cudagraph_mode.mixed_mode()
                 # make sure we capture the largest batch size first
                 compilation_cases = list(
-                    product(reversed(self.cudagraph_batch_sizes), lora_cases)
+                    product(reversed(self.cudagraph_batch_sizes), lora_cases, self.qos_k_cases)
                 )
                 self._capture_cudagraphs(
                     compilation_cases,
@@ -4236,7 +4251,7 @@ class GPUModelRunner(
                     if max_num_tokens >= x >= self.uniform_decode_query_len
                 ]
                 compilation_cases_decode = list(
-                    product(reversed(decode_cudagraph_batch_sizes), lora_cases)
+                    product(reversed(decode_cudagraph_batch_sizes), lora_cases, self.qos_k_cases)
                 )
                 self._capture_cudagraphs(
                     compilation_cases=compilation_cases_decode,
@@ -4268,7 +4283,7 @@ class GPUModelRunner(
 
     def _capture_cudagraphs(
         self,
-        compilation_cases: list[tuple[int, bool]],
+        compilation_cases: list[tuple[int, bool, int]],
         cudagraph_runtime_mode: CUDAGraphMode,
         uniform_decode: bool,
     ):
@@ -4289,7 +4304,7 @@ class GPUModelRunner(
             )
 
         # We skip EPLB here since we don't want to record dummy metrics
-        for num_tokens, activate_lora in compilation_cases:
+        for num_tokens, activate_lora, k_qos in compilation_cases:
             # We currently only capture ubatched graphs when its a FULL
             # cudagraph, a uniform decode batch, and the number of tokens
             # is above the threshold. Otherwise we just capture a non-ubatched
@@ -4321,6 +4336,7 @@ class GPUModelRunner(
                     skip_eplb=True,
                     remove_lora=False,
                     activate_lora=activate_lora,
+                    k_qos=k_qos
                 )
             self._dummy_run(
                 num_tokens,
@@ -4330,6 +4346,7 @@ class GPUModelRunner(
                 skip_eplb=True,
                 remove_lora=False,
                 activate_lora=activate_lora,
+                k_qos=k_qos,
             )
         self.maybe_remove_all_loras(self.lora_config)
 
@@ -4580,7 +4597,7 @@ class GPUModelRunner(
         # Trigger cudagraph dispatching keys initialization after
         # resolved cudagraph mode.
         self.cudagraph_dispatcher.initialize_cudagraph_keys(
-            self.compilation_config.cudagraph_mode, self.uniform_decode_query_len
+            self.compilation_config.cudagraph_mode, self.uniform_decode_query_len, qos_k_list=self.qos_k_cases
         )
 
     def calculate_reorder_batch_threshold(self) -> None:

@@ -1337,6 +1337,20 @@ class ModelConfig:
         num_heads = getattr(self.hf_text_config, "num_attention_heads", 0)
         return num_heads // parallel_config.tensor_parallel_size
 
+    def get_activated_num_experts(self) -> int:
+        """Returns the number of experts in the model."""
+        num_a_expert_names = [
+            "num_experts_per_tok",  # olmoe,deepseek,qwen
+            "num_experts_per_token",  # kimi
+        ]
+        num_a_experts = getattr_iter(self.hf_text_config, num_a_expert_names, 0)
+        if isinstance(num_a_experts, list):
+            # Ernie VL's remote code uses list[int]...
+            # The values are always the same so we just take the first one.
+            return num_a_experts[0]
+        # Coerce to 0 if explicitly set to None
+        return num_a_experts or 0
+
     def get_num_experts(self) -> int:
         """Returns the number of experts in the model."""
         num_expert_names = [
