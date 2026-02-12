@@ -691,6 +691,7 @@ def invoke_fused_moe_kernel(
         if block_shape is not None:
             BLOCK_SIZE_K = min(BLOCK_SIZE_K, min(block_shape[0], block_shape[1]))
         # print(f"[DDDBUG] {A.shape},{B.shape},{C.shape}")
+        # print(f"[DDDBUG] topk before kernel: {top_k}")
         fused_moe_kernel[grid](
             A,
             B,

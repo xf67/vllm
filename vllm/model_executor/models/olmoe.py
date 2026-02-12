@@ -110,15 +110,10 @@ class OlmoeMoE(nn.Module):
         hidden_states = hidden_states.view(-1, hidden_dim)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
-        if k_qos is not None and k_qos>0:
-            assert k_qos<self.num_experts
-            top_k_buff = self.experts.top_k
-            self.experts.top_k = k_qos
+        # print(f"[DDDBUG] topk at olmoe model: {self.experts.top_k}")
         final_hidden_states = self.experts(
             hidden_states=hidden_states, router_logits=router_logits
         )
-        if k_qos is not None and k_qos>0:
-            self.experts.top_k = top_k_buff
         return final_hidden_states.view(orig_shape)
 
 
@@ -500,6 +495,9 @@ class OlmoeForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
             # print("[DDDBUG] k_qos not found")
             k_qos = -1
         # print(f"[DDDBUG] k is {k_qos}")
+        if k_qos>0 and k_qos<self.config.num_experts:
+            for layer in self.model.layers: #因为后面直接走graph，所以k_qos要打在这里
+                layer.mlp.experts.top_k = k_qos
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds, k_qos
         )
