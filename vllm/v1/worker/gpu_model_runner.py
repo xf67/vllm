@@ -450,12 +450,16 @@ class GPUModelRunner(
 
         qos_aware = os.environ.get("QOS_AWARE", "0")
         qos_k_list_str = os.environ.get("QOS_K_LIST", "-1")
-        qos_k_cases = [int(x) for x in qos_k_list_str.split(",")]
+        if qos_k_list_str.startswith('r'):
+            qos_k_list_start_end = [int(x) for x in qos_k_list_str[1:].split(",")]
+            qos_k_cases = [x for x in range(qos_k_list_start_end[0],qos_k_list_start_end[1]+1)]
+        else:
+            qos_k_cases = [int(x) for x in qos_k_list_str.split(",")]
         # print(vllm_config.model_config)
         if qos_aware==0 or qos_k_cases[0] == -1:
             assert len(qos_k_cases) == 1
             qos_k_cases[0] = vllm_config.model_config.get_activated_num_experts()
-        self.qos_k_cases = qos_k_cases
+        self.qos_k_cases = [x for x in reversed(sorted(qos_k_cases))]
 
         # Cache the device properties.
         self._init_device_properties()
@@ -2790,6 +2794,7 @@ class GPUModelRunner(
                 has_lora=len(self.input_batch.lora_id_to_lora_request) > 0,
                 k_qos=model_kwargs.get("k_qos", -1),
             )
+            # print(f"[DDDBUG] k_qos at BatchDescriptor: {model_kwargs.get('k_qos', -1)}")
             cudagraph_runtime_mode, batch_descriptor = (
                 self.cudagraph_dispatcher.dispatch(
                     batch_descriptor,
@@ -3884,6 +3889,7 @@ class GPUModelRunner(
                     ubatch_slices=ubatch_slices,
                 ),
             ):
+                # print(f"[DDDBUG] at dummyrun. model_kwargs : {model_kwargs}. batch_dec_k: {batch_descriptor.k_qos if batch_descriptor else -2}")
                 outputs = self.model(
                     input_ids=input_ids,
                     positions=positions,
@@ -4274,7 +4280,7 @@ class GPUModelRunner(
         cuda_graph_size = start_free_gpu_memory - end_free_gpu_memory
         # This usually takes 5~20 seconds.
         logger.info_once(
-            "Graph capturing finished in %.0f secs, took %.2f GiB",
+            "Graph capturing finished in %.0f secs, took %.6f GiB",
             elapsed_time,
             cuda_graph_size / (1 << 30),
             scope="local",
@@ -4294,6 +4300,7 @@ class GPUModelRunner(
 
         # Only rank 0 should print progress bar during capture
         if is_global_first_rank():
+            # print(f"[DDDBUG] {compilation_cases}")
             compilation_cases = tqdm(
                 compilation_cases,
                 disable=not self.load_config.use_tqdm_on_load,
