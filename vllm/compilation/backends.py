@@ -23,6 +23,7 @@ from vllm.compilation.partition_rules import (
     should_split,
 )
 from vllm.config import CompilationConfig, CUDAGraphMode, VllmConfig
+from vllm.forward_context import make_batch_descriptor_key_fn_for_attention
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
 from vllm.utils.import_utils import resolve_obj_by_qualname
@@ -301,15 +302,21 @@ class SplitItem:
     graph_id: int
     is_splitting_graph: bool
     graph: fx.GraphModule
+    # True if this segment starts with an MoE module (per-topk cuda graph; no key_fn).
+    is_moe_segment: bool = False
 
 
 def split_graph(
-    graph: fx.GraphModule, splitting_ops: list[str]
+    graph: fx.GraphModule,
+    splitting_ops: list[str],
+    enable_moe_split: bool = False,
 ) -> tuple[fx.GraphModule, list[SplitItem]]:
-    # split graph by ops
+    # split graph by ops and optionally by MoE boundary
+    # (attention vs MoE for shared attn graph)
     subgraph_id = 0
     node_to_subgraph_id: dict[fx.Node, int] = {}
     split_op_graphs: list[int] = []
+    moe_graph_ids: set[int] = set()
     for node in graph.graph.nodes:
         if node.op in ("output", "placeholder"):
             continue
@@ -326,10 +333,16 @@ def split_graph(
                 node_to_subgraph_id[node] = node_to_subgraph_id[input_node]
                 continue
 
-        if should_split(node, splitting_ops):
+        do_split, is_moe_split = should_split(
+            node, splitting_ops, graph if enable_moe_split else None
+        )
+        if do_split:
             subgraph_id += 1
             node_to_subgraph_id[node] = subgraph_id
-            split_op_graphs.append(subgraph_id)
+            if is_moe_split:
+                moe_graph_ids.add(subgraph_id)
+            else:
+                split_op_graphs.append(subgraph_id)
             subgraph_id += 1
         else:
             node_to_subgraph_id[node] = subgraph_id
@@ -354,7 +367,15 @@ def split_graph(
         module = getattr(split_gm, name)
 
         graph_id = int(name.replace("submod_", ""))
-        outputs.append(SplitItem(name, graph_id, (graph_id in split_op_graphs), module))
+        outputs.append(
+            SplitItem(
+                name,
+                graph_id,
+                (graph_id in split_op_graphs),
+                module,
+                is_moe_segment=(graph_id in moe_graph_ids),
+            )
+        )
 
     # sort by integer graph_id, rather than string name
     outputs.sort(key=lambda x: x.graph_id)
@@ -458,6 +479,25 @@ class PiecewiseCompileInterpreter(torch.fx.Interpreter):
                     current_platform.get_static_graph_wrapper_cls()
                 )
 
+                # When share_attn_cudagraph_across_topk is on, attention
+                # segments (non-MoE) use key_fn to mask k_qos so one CUDA
+                # graph is shared across different top-k values.
+                key_fn = None
+                if self.compilation_config.share_attn_cudagraph_across_topk:
+                    piecewise_item = next(
+                        (
+                            item
+                            for item in self.vllm_backend.piecewise_graphs
+                            if item.submod_name == target
+                        ),
+                        None,
+                    )
+                    if (
+                        piecewise_item is not None
+                        and not piecewise_item.is_moe_segment
+                    ):
+                        key_fn = make_batch_descriptor_key_fn_for_attention()
+
                 # Always assign PIECEWISE runtime mode to the
                 # CUDAGraphWrapper for piecewise_backend, to distinguish
                 # it from the FULL cudagraph runtime mode, no matter it
@@ -471,6 +511,7 @@ class PiecewiseCompileInterpreter(torch.fx.Interpreter):
                         gc_disable=not piecewise_backend.is_first_graph,
                         weak_ref_output=piecewise_backend.is_last_graph,
                     ),
+                    key_fn=key_fn,
                 )
             else:
                 self.module.__dict__[target] = piecewise_backend
@@ -662,7 +703,11 @@ class VllmBackend:
         else:
             fx_split_ops = self.compilation_config.splitting_ops or []
 
-        self.split_gm, self.piecewise_graphs = split_graph(graph, fx_split_ops)
+        self.split_gm, self.piecewise_graphs = split_graph(
+            graph,
+            fx_split_ops,
+            enable_moe_split=self.compilation_config.share_attn_cudagraph_across_topk,
+        )
 
         from torch._dynamo.utils import lazy_format_graph_code
 

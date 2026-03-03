@@ -250,15 +250,15 @@ def test_should_split():
 
     # supports OpOverloadPacket
     splitting_ops = ["aten::add"]
-    assert should_split(node, splitting_ops)
+    assert should_split(node, splitting_ops)[0]
 
     # supports OpOverload
     splitting_ops = ["aten::add.default"]
-    assert should_split(node, splitting_ops)
+    assert should_split(node, splitting_ops)[0]
 
     # supports OpOverload
     splitting_ops = ["aten::add.Tensor"]
-    assert not should_split(node, splitting_ops)
+    assert not should_split(node, splitting_ops)[0]
 
     q, k, v, out = [torch.randn(1)] * 4
 
@@ -273,7 +273,7 @@ def test_should_split():
     )
 
     splitting_ops = ["silly::attention"]
-    assert should_split(node, splitting_ops)
+    assert should_split(node, splitting_ops)[0]
 
     # supports custom ops as OpOverload
     node = torch.fx.Node(
@@ -286,10 +286,10 @@ def test_should_split():
     )
 
     splitting_ops = ["silly::attention"]
-    assert should_split(node, splitting_ops)
+    assert should_split(node, splitting_ops)[0]
 
     splitting_ops = ["silly::attention.default"]
-    assert should_split(node, splitting_ops)
+    assert should_split(node, splitting_ops)[0]
 
 
 @pytest.mark.skipif(

@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -9,32 +10,54 @@ from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
+if TYPE_CHECKING:
+    import torch.fx as fx
 
-def should_split(node: torch.fx.Node, splitting_ops: list[str]) -> bool:
+
+def _is_moe_module_call(node: torch.fx.Node, graph_module: "fx.GraphModule") -> bool:
+    """
+    Check if this node is a call to an MoE module (e.g. OlmoeMoE).
+    Used to split piecewise CUDA graph between attention and MoE so that
+    attention graph can be shared across different top-k.
+    """
+    if node.op != "call_module":
+        return False
+    try:
+        mod = graph_module.get_submodule(node.target)
+    except (AttributeError, KeyError):
+        return False
+    return getattr(mod, "_vllm_moe_module", False)
+
+
+def should_split(
+    node: torch.fx.Node,
+    splitting_ops: list[str],
+    graph_module: "fx.GraphModule | None" = None,
+) -> tuple[bool, bool]:
     """
     Check if a node should be split for dynamo graph partition.
-    It operates on dynamo graph, so the node.target can be anything.
-    We need to check and split only on OpOverload and OpOverloadPacket.
+    Returns (should_split, is_moe_split).
+    - When splitting on aten ops: (True, False) — segment is marked as splitting_graph.
+    - When splitting on MoE module call: (True, True) — segment is compiled but is_moe_segment.
     """
+    # MoE boundary: split so that attention and MoE are in different subgraphs
+    if graph_module is not None and _is_moe_module_call(node, graph_module):
+        return (True, True)
 
     if node.op != "call_function":
-        return False
+        return (False, False)
 
     target = node.target
 
     if isinstance(target, torch._ops.OpOverloadPacket):
-        # Example: "aten::add"
-        return target._qualified_op_name in splitting_ops
+        return (target._qualified_op_name in splitting_ops, False)
 
     if isinstance(target, torch._ops.OpOverload):
-        # Example: "aten::add"
         packet_name = target.name()
-
-        # Example: "aten::add.default"
         op_overload_name = f"{packet_name}.{target._overloadname}"
-        return op_overload_name in splitting_ops or packet_name in splitting_ops
-
-    return False
+        if op_overload_name in splitting_ops or packet_name in splitting_ops:
+            return (True, False)
+    return (False, False)
 
 
 @contextlib.contextmanager

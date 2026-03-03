@@ -71,7 +71,9 @@ class CUDAGraphWrapper:
         vllm_config: VllmConfig,
         runtime_mode: CUDAGraphMode,
         cudagraph_options: CUDAGraphOptions | None = None,
+        key_fn: Callable[[Any], Any] | None = None,
     ):
+        self.key_fn = key_fn
         self.runnable = runnable
         self.vllm_config = vllm_config
         self.runtime_mode = runtime_mode
@@ -87,7 +89,7 @@ class CUDAGraphWrapper:
         # streams, it might not be safe to share a global pool.
         # only investigate this when we use multiple streams
         self.graph_pool = current_platform.get_global_graph_pool()
-
+        # print(f"[DDDBUG] graph_pool: {self.graph_pool}") # (0,1)
         if cudagraph_options is None:
             cudagraph_options = CUDAGraphOptions()
         self.cudagraph_options = cudagraph_options
@@ -124,6 +126,9 @@ class CUDAGraphWrapper:
             # CUDAGraphWrapper when nesting multiple instances with different
             # runtime modes.
             return self.runnable(*args, **kwargs)
+
+        if self.key_fn is not None and batch_descriptor is not None:
+            batch_descriptor = self.key_fn(batch_descriptor)
 
         if batch_descriptor not in self.concrete_cudagraph_entries:
             # create a new entry for this batch descriptor
@@ -169,7 +174,7 @@ class CUDAGraphWrapper:
                 else:
                     set_graph_pool_id(current_platform.graph_pool_handle())
                 # mind-exploding: carefully manage the reference and memory.
-                with torch.cuda.graph(cudagraph, pool=self.graph_pool):
+                with torch.cuda.graph(cudagraph, pool=self.graph_pool): #! share is here
                     # `output` is managed by pytorch's cudagraph pool
                     output = self.runnable(*args, **kwargs)
                     if self.cudagraph_options.weak_ref_output:

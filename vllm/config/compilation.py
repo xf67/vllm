@@ -422,6 +422,18 @@ class CompilationConfig:
     When `enable_lora` is False, this option has no effect.
     """
 
+    share_attn_cudagraph_across_topk: bool = False
+    """When True, piecewise CUDA graphs split between attention and MoE
+    segments. Attention segments use a key_fn that masks k_qos so a single
+    CUDA graph is shared across different MoE top-k values, saving GPU
+    memory. Requires cudagraph_mode with piecewise support and MoE modules
+    marked with `_vllm_moe_module = True`.
+
+    Example usage:
+        --compilation-config '{"cudagraph_mode":"PIECEWISE",
+                               "share_attn_cudagraph_across_topk":true}'
+    """
+
     use_inductor_graph_partition: bool = False
     """Use inductor graph partition to split the graph at cudagraph_unsafe ops.
     This partition happens at inductor codegen time after all passes and fusions

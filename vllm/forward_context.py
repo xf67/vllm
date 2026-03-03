@@ -56,6 +56,24 @@ class BatchDescriptor(NamedTuple):
         )
 
 
+def make_batch_descriptor_key_fn_for_attention():
+    """
+    Return a key_fn for CUDAGraphWrapper that masks k_qos in BatchDescriptor.
+    Used for piecewise CUDA graph segments that are attention-only (top-k
+    independent), so one graph can be shared across different top-k and save memory.
+    """
+
+    def key_fn(batch_descriptor: BatchDescriptor) -> BatchDescriptor:
+        return BatchDescriptor(
+            batch_descriptor.num_tokens,
+            uniform_decode=batch_descriptor.uniform_decode,
+            has_lora=batch_descriptor.has_lora,
+            k_qos=-1,
+        )
+
+    return key_fn
+
+
 def _compute_sp_num_tokens(
     num_tokens_across_dp_cpu: torch.Tensor, sequence_parallel_size: int
 ) -> list[int]:

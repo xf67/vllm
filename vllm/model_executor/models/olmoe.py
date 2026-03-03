@@ -102,6 +102,9 @@ class OlmoeMoE(nn.Module):
         )
 
         self.num_experts = num_experts
+        # Mark for piecewise CUDA graph: split between attention and MoE so
+        # attention graph can be shared across different top-k.
+        self._vllm_moe_module = True
 
     def forward(self, hidden_states: torch.Tensor, k_qos: int | None) -> torch.Tensor:
         # NOTE: hidden_states can have either 1D or 2D shape.
