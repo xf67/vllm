@@ -1272,6 +1272,7 @@ class CompletionRequest(OpenAIBaseModel):
     # --8<-- [end:completion-extra-params]
 
     k_qos: int | None = None
+    ttft_max: float | None = None  # max TTFT in seconds (QoS)
 
     # Default sampling parameters for completion requests
     _DEFAULT_SAMPLING_PARAMS: dict = {
@@ -1372,7 +1373,8 @@ class CompletionRequest(OpenAIBaseModel):
                 self.structured_outputs = StructuredOutputsParams(**kwargs)
 
         extra_args: dict[str, Any] = self.vllm_xargs if self.vllm_xargs else {}
-        extra_args['k_qos'] = self.k_qos
+        extra_args['k_qos'] = self.k_qos if self.k_qos else 0
+        extra_args['ttft_max'] = self.ttft_max if self.ttft_max else 0
         if self.kv_transfer_params:
             # Pass in kv_transfer_params via extra_args
             extra_args["kv_transfer_params"] = self.kv_transfer_params
@@ -1902,6 +1904,12 @@ class CompletionResponseChoice(OpenAIBaseModel):
     prompt_token_ids: list[int] | None = None  # For prompt
 
 
+class ServerTiming(OpenAIBaseModel):
+    overhead_ms: float = 0.0
+    queue_time_ms: float = 0.0
+    prefill_time_ms: float = 0.0
+
+
 class CompletionResponse(OpenAIBaseModel):
     id: str = Field(default_factory=lambda: f"cmpl-{random_uuid()}")
     object: Literal["text_completion"] = "text_completion"
@@ -1916,6 +1924,7 @@ class CompletionResponse(OpenAIBaseModel):
     kv_transfer_params: dict[str, Any] | None = Field(
         default=None, description="KVTransfer parameters."
     )
+    server_timing: ServerTiming | None = Field(default=None)
 
 
 class CompletionResponseStreamChoice(OpenAIBaseModel):
@@ -1944,6 +1953,7 @@ class CompletionStreamResponse(OpenAIBaseModel):
     model: str
     choices: list[CompletionResponseStreamChoice]
     usage: UsageInfo | None = Field(default=None)
+    server_timing: ServerTiming | None = Field(default=None)
 
 
 class EmbeddingResponseData(OpenAIBaseModel):

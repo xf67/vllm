@@ -44,12 +44,12 @@ from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
+from vllm.v1.core.sched.perf_model import PrefillPerfModel
 from vllm.v1.utils import record_function_or_nullcontext
 
 import os
 
 logger = init_logger(__name__)
-MAJORITY_RATIO = float(os.environ.get("MAJORITY_RATIO",0.8))
 
 class Scheduler(SchedulerInterface):
     def __init__(
@@ -189,6 +189,28 @@ class Scheduler(SchedulerInterface):
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
 
         self.qos_aware = int(os.environ.get('QOS_AWARE', '1')) # 0 for qos_agnostic, 1 for qos_aware+scheduler, 2 for qos_aware+staticK
+
+        # QoS scheduling parameters
+        self.majority_ratio = float(os.environ.get("MAJORITY_RATIO", 0.8))
+        self.min_concurrency = int(os.environ.get("MIN_CONCURRENCY", 8))
+        self.ttft_safety_factor = float(
+            os.environ.get("TTFT_SAFETY_FACTOR", 1.5)
+        )
+        self.starvation_timeout = float(
+            os.environ.get("STARVATION_TIMEOUT", 5.0)
+        )
+        self.high_k_cooldown_duration = float(
+            os.environ.get("HIGH_K_COOLDOWN", 2.0)
+        )
+        self.prefill_defer_threshold = int(
+            os.environ.get("PREFILL_DEFER_THRESHOLD", 16)
+        )
+        self.perf_model = PrefillPerfModel()
+
+        # State machine: 0 = LOW_K phase, 1 = HIGH_K phase
+        self.phase = 0
+        self.phase_high_k = 0
+        self.high_k_until = 0.0
 
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
@@ -399,21 +421,23 @@ class Scheduler(SchedulerInterface):
         skipped_waiting_requests = create_request_queue(self.policy)
 
         dominant_k = 0
-        if self.qos_aware==1 and self.running:
-            running_ks = sorted([
-                r.sampling_params.extra_args.get('k_qos', 0) 
+        if self.qos_aware == 1 and self.running:
+            sorted_ks = sorted(
+                r.sampling_params.extra_args.get('k_qos', 0)
                 for r in self.running
-            ])
+            )
+            majority_index = min(
+                max(int(len(sorted_ks) * self.majority_ratio), 0),
+                len(sorted_ks) - 1,
+            )
+            dominant_k = sorted_ks[majority_index] or 0
 
-            majority_index = int(len(running_ks) * MAJORITY_RATIO)
-            if majority_index >= len(running_ks): majority_index = len(running_ks) - 1
-            if majority_index <0 : majority_index = 0
-            dominant_k = running_ks[majority_index]
-            if not dominant_k:
-                dominant_k = 0
-            # print(f"[DDDBUG] dominat_k: {dominant_k}")
-            # print(f"[DDDBUG] running list: {running_ks}")
+        now = time.time()
 
+        # State machine: HIGH_K → LOW_K when cooldown expires
+        if self.phase == 1 and now >= self.high_k_until:
+            self.phase = 0
+            self.phase_high_k = 0
 
         # Next, schedule the WAITING requests.
         if not preempted_reqs:
@@ -423,19 +447,73 @@ class Scheduler(SchedulerInterface):
 
                 request = self.waiting.peek_request()
 
-                if self.qos_aware==1:
-                    req_k = request.sampling_params.extra_args.get('k_qos', 0)
+                if self.qos_aware == 1:
+                    req_k = request.sampling_params.extra_args.get(
+                        'k_qos', 0)
+                    req_ttft_max = request.sampling_params.extra_args.get(
+                        'ttft_max', 0)
+                    est_new_tokens = max(
+                        request.num_tokens - request.num_computed_tokens, 1)
+                    is_heavy = (
+                        est_new_tokens > self.prefill_defer_threshold)
+
                     allow_admission = True
-                    if dominant_k > 0:
-                        if req_k > dominant_k:
+
+                    # ====== State machine admission ======
+
+                    if self.phase == 0:
+                        # LOW_K phase: block high-k requests
+                        if dominant_k > 0 and req_k > dominant_k:
                             allow_admission = False
-                    STARVATION_TIMEOUT = float(os.environ.get("STARVATION_TIMEOUT",0.0))
-                    if (time.time() - request.arrival_time) > STARVATION_TIMEOUT:
+
+                    else:
+                        # HIGH_K phase: admit high-k + low-k decode,
+                        #               block low-k prefill
+                        if req_k >= self.phase_high_k:
+                            pass  # admit high-k
+                        elif not is_heavy:
+                            pass  # admit low-k decode (cheap)
+                        else:
+                            allow_admission = False  # defer low-k prefill
+
+                    # ====== Override rules (both phases) ======
+
+                    if not allow_admission:
+                        # Rule 2: TTFT deadline break-in
+                        if (req_ttft_max > 0
+                                and self.perf_model.enabled):
+                            elapsed = now - request.arrival_time
+                            remaining = req_ttft_max - elapsed
+                            est_prefill = self.perf_model.predict(
+                                request.num_prompt_tokens, req_k,
+                            ) / 1000.0  # ms → s
+                            if (remaining
+                                    < est_prefill * self.ttft_safety_factor):
+                                allow_admission = True
+
+                        # Rule 3: starvation fallback
+                        if (not allow_admission
+                                and self.starvation_timeout > 0
+                                and (now - request.arrival_time)
+                                > self.starvation_timeout):
+                            allow_admission = True
+
+                    # Transition LOW_K → HIGH_K on break-in
+                    if (allow_admission
+                            and self.phase == 0
+                            and req_k > dominant_k
+                            and dominant_k > 0):
+                        self.phase = 1
+                        self.phase_high_k = req_k
+                        self.high_k_until = (
+                            now + self.high_k_cooldown_duration)
+                        dominant_k = req_k
+
+                    # Rule 4: low concurrency — avoid GPU idling
+                    if (not allow_admission
+                            and len(self.running) < self.min_concurrency):
                         allow_admission = True
-                    MIN_CONCURRENCY = int(os.environ.get("MIN_CONCURRENCY",8))
-                    if len(self.running) < MIN_CONCURRENCY:
-                        allow_admission = True
-                    
+
                     if not allow_admission:
                         self.waiting.pop_request()
                         skipped_waiting_requests.prepend_request(request)
@@ -631,7 +709,7 @@ class Scheduler(SchedulerInterface):
                 self.running.append(request)
                 if self.log_stats:
                     request.record_event(
-                        EngineCoreEventType.SCHEDULED, scheduled_timestamp
+                        EngineCoreEventType.SCHEDULED, time.monotonic()
                     )
                 if request.status == RequestStatus.WAITING:
                     scheduled_new_reqs.append(request)

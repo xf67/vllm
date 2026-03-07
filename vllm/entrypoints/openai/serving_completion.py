@@ -22,6 +22,7 @@ from vllm.entrypoints.openai.protocol import (
     ErrorResponse,
     PromptTokenUsageInfo,
     RequestResponseMetadata,
+    ServerTiming,
     UsageInfo,
 )
 from vllm.entrypoints.openai.serving_engine import OpenAIServing, clamp_prompt_logprobs
@@ -39,6 +40,29 @@ from vllm.utils.collection_utils import as_list
 from vllm.v1.sample.logits_processor import validate_logits_processors_parameters
 
 logger = init_logger(__name__)
+
+
+def _extract_server_timing(
+    res: RequestOutput,
+    api_receive_ts: float = 0.0,
+) -> ServerTiming | None:
+    m = getattr(res, "metrics", None)
+    if m is None or m.scheduled_ts == 0.0 or m.queued_ts == 0.0:
+        return None
+    overhead_ms = (
+        (m.queued_ts - api_receive_ts) * 1000
+        if api_receive_ts > 0 else 0.0
+    )
+    queue_ms = (m.scheduled_ts - m.queued_ts) * 1000
+    prefill_ms = (
+        (m.first_token_ts - m.scheduled_ts) * 1000
+        if m.first_token_ts > 0 else 0.0
+    )
+    return ServerTiming(
+        overhead_ms=round(overhead_ms, 3),
+        queue_time_ms=round(queue_ms, 3),
+        prefill_time_ms=round(prefill_ms, 3),
+    )
 
 
 class OpenAIServingCompletion(OpenAIServing):
@@ -90,6 +114,7 @@ class OpenAIServingCompletion(OpenAIServing):
             - suffix (the language models we currently support do not support
             suffix)
         """
+        api_receive_ts = time.monotonic()
         error_check_ret = await self._check_model(request)
         if error_check_ret is not None:
             return error_check_ret
@@ -270,6 +295,7 @@ class OpenAIServingCompletion(OpenAIServing):
                 num_prompts=num_prompts,
                 tokenizer=tokenizer,
                 request_metadata=request_metadata,
+                api_receive_ts=api_receive_ts,
             )
 
         # Non-streaming response
@@ -302,6 +328,7 @@ class OpenAIServingCompletion(OpenAIServing):
                 model_name,
                 tokenizer,
                 request_metadata,
+                api_receive_ts=api_receive_ts,
             )
         except asyncio.CancelledError:
             return self.create_error_response("Client disconnected")
@@ -333,6 +360,7 @@ class OpenAIServingCompletion(OpenAIServing):
         num_prompts: int,
         tokenizer: AnyTokenizer,
         request_metadata: RequestResponseMetadata,
+        api_receive_ts: float = 0.0,
     ) -> AsyncGenerator[str, None]:
         num_choices = 1 if request.n is None else request.n
         previous_text_lens = [0] * num_choices * num_prompts
@@ -347,8 +375,10 @@ class OpenAIServingCompletion(OpenAIServing):
             stream_options, self.enable_force_include_usage
         )
 
+        last_res: RequestOutput | None = None
         try:
             async for prompt_idx, res in result_generator:
+                last_res = res
                 prompt_token_ids = res.prompt_token_ids
                 prompt_logprobs = res.prompt_logprobs
 
@@ -488,12 +518,15 @@ class OpenAIServingCompletion(OpenAIServing):
                 )
 
             if include_usage:
+                st = (_extract_server_timing(last_res, api_receive_ts)
+                      if last_res is not None else None)
                 final_usage_chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[],
                     usage=final_usage_info,
+                    server_timing=st,
                 )
                 final_usage_data = final_usage_chunk.model_dump_json(
                     exclude_unset=False, exclude_none=True
@@ -518,6 +551,7 @@ class OpenAIServingCompletion(OpenAIServing):
         model_name: str,
         tokenizer: AnyTokenizer,
         request_metadata: RequestResponseMetadata,
+        api_receive_ts: float = 0.0,
     ) -> CompletionResponse:
         choices: list[CompletionResponseChoice] = []
         num_prompt_tokens = 0
@@ -613,6 +647,8 @@ class OpenAIServingCompletion(OpenAIServing):
         request_metadata.final_usage_info = usage
         if final_res_batch:
             kv_transfer_params = final_res_batch[0].kv_transfer_params
+        st = (_extract_server_timing(last_final_res, api_receive_ts)
+              if last_final_res is not None else None)
         return CompletionResponse(
             id=request_id,
             created=created_time,
@@ -620,6 +656,7 @@ class OpenAIServingCompletion(OpenAIServing):
             choices=choices,
             usage=usage,
             kv_transfer_params=kv_transfer_params,
+            server_timing=st,
         )
 
     def _create_completion_logprobs(

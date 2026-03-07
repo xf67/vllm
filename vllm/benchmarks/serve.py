@@ -336,6 +336,7 @@ def calculate_metrics(
                 tpots.append(tpot)
             # Note: if output_len <= 1, we regard tpot as 0 for goodput
             all_tpots.append(tpot)
+            outputs[i].tpot = tpot
             itls += outputs[i].itl
             ttfts.append(outputs[i].ttft)
             e2els.append(outputs[i].latency)
@@ -692,15 +693,16 @@ async def benchmark(
                 for rps_val in range(last_int_rps + 1, current_int_rps + 1):
                     rps_change_events.append({"rps": rps_val, "timestamp": timestamp})
                 last_int_rps = current_int_rps
-        prompt, prompt_len, output_len, mm_content, request_id, k_qos = (
+        prompt, prompt_len, output_len, mm_content, request_id, k_qos, ttft_max = (
             request.prompt,
             request.prompt_len,
             request.expected_output_len,
             request.multi_modal_data,
             request.request_id,
-            request.k_qos
+            request.k_qos,
+            request.ttft_max,
         )
-        # print(f"[DDDBUG] k_qos at server.py at get_request {request.k_qos}")
+        # print(f"[DDDBUG] k_qos at serve.py at get_request {request.k_qos}")
         req_model_id, req_model_name = model_id, model_name
         if lora_modules:
             req_lora_module = next(lora_modules)
@@ -719,9 +721,9 @@ async def benchmark(
             extra_headers=extra_headers,
             extra_body=extra_body,
             request_id=request_id,
-            k_qos=k_qos
+            k_qos=k_qos,
+            ttft_max=ttft_max,
         )
-        # print(f"[DDDBUG] k_qos at server.py at RequestFuncInput: {k_qos}")
         tasks.append(
             asyncio.create_task(
                 limited_request_func(
@@ -816,6 +818,8 @@ async def benchmark(
             "errors": [output.error for output in outputs],
             "max_output_tokens_per_s": metrics.max_output_tokens_per_s,
             "max_concurrent_requests": metrics.max_concurrent_requests,
+            "k_qos_list": [output.k_qos for output in outputs],
+            "ttft_max_list": [output.ttft_max for output in outputs],
         }
     else:
         result = {
@@ -875,6 +879,114 @@ async def benchmark(
         process_one_metric("tpot", "TPOT", "Time per Output Token (excl. 1st token)")
         process_one_metric("itl", "ITL", "Inter-token Latency")
     process_one_metric("e2el", "E2EL", "End-to-end Latency")
+
+    # --- Per-k_qos group statistics ---
+    if task_type == TaskType.GENERATION:
+        successful = [o for o in outputs if o.success]
+        has_k = any(o.k_qos is not None for o in successful)
+        if has_k:
+            from collections import defaultdict as _dd
+
+            k_groups: dict[int, list] = _dd(list)
+            for o in successful:
+                k_groups[o.k_qos or 0].append(o)
+
+            print("{s:{c}^{n}}".format(
+                s=" Per-k_qos Statistics ", n=50, c="="))
+            per_k_result: dict[str, dict] = {}
+            for k_val in sorted(k_groups.keys()):
+                grp = k_groups[k_val]
+                ttfts_ms = [o.ttft * 1000 for o in grp]
+                tpots_ms = [o.tpot * 1000 for o in grp if o.tpot > 0]
+
+                norm_ttfts = [
+                    o.ttft * 1000 / max(o.prompt_len, 1) for o in grp
+                ]
+
+                # Server-side timing components (from server_timing)
+                overheads = [
+                    o.server_overhead_ms for o in grp
+                    if o.server_overhead_ms is not None
+                ]
+                queue_delays = [
+                    o.server_queue_time_ms for o in grp
+                    if o.server_queue_time_ms is not None
+                ]
+                prefill_times = [
+                    o.server_prefill_time_ms for o in grp
+                    if o.server_prefill_time_ms is not None
+                ]
+
+                slo_met = sum(
+                    1 for o in grp
+                    if o.ttft_max is not None
+                    and o.ttft_max > 0
+                    and o.ttft <= o.ttft_max
+                )
+                slo_total = sum(
+                    1 for o in grp
+                    if o.ttft_max is not None and o.ttft_max > 0
+                )
+                slo_rate = (slo_met / slo_total * 100) if slo_total else float('nan')
+
+                print(f"  k_qos={k_val}  (n={len(grp)})")
+                print(f"    TTFT       mean={np.mean(ttfts_ms):.2f}ms  "
+                      f"p50={np.median(ttfts_ms):.2f}ms  "
+                      f"p99={np.percentile(ttfts_ms, 99):.2f}ms")
+                print(f"    TTFT/tok   mean={np.mean(norm_ttfts):.4f}ms  "
+                      f"p50={np.median(norm_ttfts):.4f}ms")
+                if overheads:
+                    print(f"    Overhead   mean={np.mean(overheads):.2f}ms  "
+                          f"p50={np.median(overheads):.2f}ms  "
+                          f"p99={np.percentile(overheads, 99):.2f}ms")
+                if queue_delays:
+                    print(f"    QueueWait  mean={np.mean(queue_delays):.2f}ms  "
+                          f"p50={np.median(queue_delays):.2f}ms  "
+                          f"p99={np.percentile(queue_delays, 99):.2f}ms")
+                if prefill_times:
+                    print(f"    Prefill    mean={np.mean(prefill_times):.2f}ms  "
+                          f"p50={np.median(prefill_times):.2f}ms  "
+                          f"p99={np.percentile(prefill_times, 99):.2f}ms")
+                if tpots_ms:
+                    print(f"    TPOT       mean={np.mean(tpots_ms):.2f}ms  "
+                          f"p50={np.median(tpots_ms):.2f}ms  "
+                          f"p99={np.percentile(tpots_ms, 99):.2f}ms")
+                if slo_total > 0:
+                    print(f"    SLO compliance: "
+                          f"{slo_met}/{slo_total} ({slo_rate:.1f}%)")
+
+                per_k_entry: dict = {
+                    "count": len(grp),
+                    "ttft_mean_ms": float(np.mean(ttfts_ms)),
+                    "ttft_p50_ms": float(np.median(ttfts_ms)),
+                    "ttft_p99_ms": float(np.percentile(ttfts_ms, 99)),
+                    "norm_ttft_mean": float(np.mean(norm_ttfts)),
+                    "norm_ttft_p50": float(np.median(norm_ttfts)),
+                    "tpot_mean_ms": float(np.mean(tpots_ms))
+                    if tpots_ms else None,
+                    "slo_compliance": slo_rate if slo_total else None,
+                }
+                if overheads:
+                    per_k_entry["overhead_mean_ms"] = float(
+                        np.mean(overheads))
+                    per_k_entry["overhead_p50_ms"] = float(
+                        np.median(overheads))
+                if queue_delays:
+                    per_k_entry["queue_wait_mean_ms"] = float(
+                        np.mean(queue_delays))
+                    per_k_entry["queue_wait_p50_ms"] = float(
+                        np.median(queue_delays))
+                    per_k_entry["queue_wait_p99_ms"] = float(
+                        np.percentile(queue_delays, 99))
+                if prefill_times:
+                    per_k_entry["prefill_mean_ms"] = float(
+                        np.mean(prefill_times))
+                    per_k_entry["prefill_p50_ms"] = float(
+                        np.median(prefill_times))
+                    per_k_entry["prefill_p99_ms"] = float(
+                        np.percentile(prefill_times, 99))
+                per_k_result[str(k_val)] = per_k_entry
+            result["per_k_qos"] = per_k_result
 
     print("=" * 50)
 

@@ -78,6 +78,7 @@ class RequestFuncInput:
     language: str | None = None
     request_id: str | None = None
     k_qos: int | None = None
+    ttft_max: float | None = None  # max TTFT in seconds
 
 
 @dataclass
@@ -94,6 +95,11 @@ class RequestFuncOutput:
     prompt_len: int = 0
     error: str = ""
     start_time: float = 0.0
+    k_qos: int | None = None
+    ttft_max: float | None = None  # max TTFT deadline in seconds
+    server_overhead_ms: float | None = None
+    server_queue_time_ms: float | None = None
+    server_prefill_time_ms: float | None = None
 
 
 class RequestFunc(Protocol):
@@ -170,8 +176,8 @@ async def async_request_openai_completions(
             "include_usage": True,
         },
         "k_qos": request_func_input.k_qos,
+        "ttft_max": request_func_input.ttft_max,
     }
-    # print(f"[DDDBUG] k_qos at endpoint_.py in playload: {request_func_input.k_qos}")
     _update_payload_common(payload, request_func_input)
 
     headers = {
@@ -181,6 +187,8 @@ async def async_request_openai_completions(
 
     output = RequestFuncOutput()
     output.prompt_len = request_func_input.prompt_len
+    output.k_qos = request_func_input.k_qos
+    output.ttft_max = request_func_input.ttft_max
 
     generated_text = ""
     st = time.perf_counter()
@@ -232,6 +240,13 @@ async def async_request_openai_completions(
                                 generated_text += text or ""
                             elif usage := data.get("usage"):
                                 output.output_tokens = usage.get("completion_tokens")
+                            if st_data := data.get("server_timing"):
+                                output.server_overhead_ms = st_data.get(
+                                    "overhead_ms")
+                                output.server_queue_time_ms = st_data.get(
+                                    "queue_time_ms")
+                                output.server_prefill_time_ms = st_data.get(
+                                    "prefill_time_ms")
                 if first_chunk_received:
                     output.success = True
                 else:

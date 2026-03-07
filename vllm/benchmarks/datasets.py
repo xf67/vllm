@@ -86,6 +86,7 @@ class SampleRequest:
     lora_request: LoRARequest | None = None
     request_id: str | None = None
     k_qos: int | None = None
+    ttft_max: float | None = None  # max TTFT in seconds
 
 
 # -----------------------------------------------------------------------------
@@ -172,6 +173,78 @@ class BenchmarkDataset(ABC):
         sample = np.random.normal(loc=mean, scale=std)
         k = round(sample)
         return min(max(1, k),num_experts)
+
+    _bench_perf_model = None
+    _qos_assignments: list[dict] | None = None
+    _qos_cursor: int = 0
+
+    @classmethod
+    def _get_bench_perf_model(cls):
+        if cls._bench_perf_model is None:
+            from vllm.v1.core.sched.perf_model import PrefillPerfModel
+            cls._bench_perf_model = PrefillPerfModel()
+        return cls._bench_perf_model
+
+    @classmethod
+    def _load_qos_file(cls):
+        """Load pre-generated QoS assignments from QOS_FILE env var."""
+        if cls._qos_assignments is not None:
+            return
+        qos_path = os.environ.get("QOS_FILE", "")
+        if qos_path and os.path.isfile(qos_path):
+            with open(qos_path) as f:
+                cls._qos_assignments = json.load(f)
+            cls._qos_cursor = 0
+        else:
+            cls._qos_assignments = []
+
+    @classmethod
+    def get_qos_for_index(cls, index: int) -> tuple[int, float] | None:
+        """Return (k_qos, ttft_max) from pre-generated file, or None."""
+        cls._load_qos_file()
+        if not cls._qos_assignments:
+            return None
+        if index < len(cls._qos_assignments):
+            entry = cls._qos_assignments[index]
+            return int(entry["k_qos"]), float(entry["ttft_max"])
+        return None
+
+    def get_ttft_max(self, prompt_len: int, k_qos: int = 0) -> float:
+        """
+        Generate a TTFT deadline (in seconds).
+
+        If PERF_MODEL_PATH is set, calibrate against profiled prefill time:
+            ttft_max = prefill_time(prompt_len, k_qos) × multiplier + queue_budget
+        Otherwise fall back to a formula-based estimate.
+
+        Env vars:
+            TTFT_MAX_STATIC   >0 → fixed value (seconds) for all requests
+            PERF_MODEL_PATH   path to perf_model.json (enables calibrated mode)
+            TTFT_MULTIPLIER   prefill time multiplier (default 3.0)
+            TTFT_QUEUE_MS     extra queue budget in ms (default 50.0)
+            TTFT_JITTER_LOW   random multiplier lower bound (default 0.8)
+            TTFT_JITTER_HIGH  random multiplier upper bound (default 1.5)
+        """
+        static = float(os.environ.get("TTFT_MAX_STATIC", 0))
+        if static > 0:
+            return static
+
+        jitter_lo = float(os.environ.get("TTFT_JITTER_LOW", 0.8))
+        jitter_hi = float(os.environ.get("TTFT_JITTER_HIGH", 1.5))
+        jitter = np.random.uniform(jitter_lo, jitter_hi)
+
+        pm = self._get_bench_perf_model()
+        if pm.enabled and k_qos > 0:
+            prefill_ms = pm.predict(prompt_len, k_qos)
+            multiplier = float(os.environ.get("TTFT_MULTIPLIER", 3.0))
+            queue_ms = float(os.environ.get("TTFT_QUEUE_MS", 50.0))
+            ttft_ms = (prefill_ms * multiplier + queue_ms) * jitter
+        else:
+            base_ms = float(os.environ.get("TTFT_BASE_MS", 30.0))
+            ms_per_token = float(os.environ.get("TTFT_MS_PER_TOKEN", 0.03))
+            ttft_ms = (base_ms + prompt_len * ms_per_token) * jitter
+
+        return ttft_ms / 1000.0
 
     def get_random_lora_request(
         self,
@@ -527,18 +600,11 @@ class RandomDataset(BenchmarkDataset):
         # Generate prefix once
         prefix_token_ids = self.get_prefix(allowed_tokens, prefix_len)
 
+        static_qos = int(os.environ.get("STATIC_QOS", -1))
+
         requests = []
         token_mismatch_total = 0
         for i in range(num_requests):
-            if int(os.environ.get("STATIC_QOS",-1))==-1:
-                k_rand = self.get_random_kqos(
-                    mean=float(os.environ.get("QOS_K_MEAN",4.0)),
-                    std=float(os.environ.get("QOS_K_STD",1.0)),
-                    num_experts=int(os.environ.get("QOS_K_MAX",32))
-                )
-            else:
-                k_rand = os.environ.get("STATIC_QOS",6)
-            # print(f"[DDDBUG] k_rand: {k_rand}")
             prompt, total_input_len, token_mismatch = self.generate_token_sequence(  # noqa: E501
                 tokenizer=tokenizer,
                 prefix_token_ids=prefix_token_ids,
@@ -550,6 +616,33 @@ class RandomDataset(BenchmarkDataset):
                 allowed_tokens=allowed_tokens,
             )
             token_mismatch_total += token_mismatch
+
+            # STATIC_QOS >= 1 → fixed k
+            # STATIC_QOS == 0 → random k
+            # STATIC_QOS == -1 → from QOS_FILE, fallback to random
+            if static_qos >= 1:
+                k_rand = static_qos
+                ttft_max_val = self.get_ttft_max(total_input_len, k_rand)
+            elif static_qos == 0:
+                k_rand = self.get_random_kqos(
+                    mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
+                    std=float(os.environ.get("QOS_K_STD", 1.0)),
+                    num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                )
+                ttft_max_val = self.get_ttft_max(total_input_len, int(k_rand))
+            else:
+                qos = self.get_qos_for_index(i)
+                if qos is not None:
+                    k_rand, ttft_max_val = qos
+                else:
+                    k_rand = self.get_random_kqos(
+                        mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
+                        std=float(os.environ.get("QOS_K_STD", 1.0)),
+                        num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                    )
+                    ttft_max_val = self.get_ttft_max(
+                        total_input_len, int(k_rand))
+
             requests.append(
                 SampleRequest(
                     prompt=prompt,
@@ -557,6 +650,7 @@ class RandomDataset(BenchmarkDataset):
                     expected_output_len=int(output_lens[i]),
                     request_id=request_id_prefix + str(i),
                     k_qos=k_rand,
+                    ttft_max=ttft_max_val,
                 )
             )
         # only used for embeddings benchmark.
@@ -1294,15 +1388,6 @@ class ShareGPTDataset(BenchmarkDataset):
             lora_request = self.get_random_lora_request(
                 max_loras=max_loras, lora_path=lora_path
             )
-            if int(os.environ.get("STATIC_QOS",-1))==-1:
-                k_rand = self.get_random_kqos(
-                    mean=float(os.environ.get("QOS_K_MEAN",4.0)),
-                    std=float(os.environ.get("QOS_K_STD",1.0)),
-                    num_experts=int(os.environ.get("QOS_K_MAX",32))
-                )
-            else:
-                k_rand = os.environ.get("STATIC_QOS",6)
-            # print(f"[DDDBUG] k_rand: {k_rand}")
             prompt_ids = tokenizer(prompt).input_ids
             completion_ids = tokenizer(completion).input_ids
             prompt_len = len(prompt_ids)
@@ -1313,6 +1398,31 @@ class ShareGPTDataset(BenchmarkDataset):
                 skip_min_output_len_check=output_len is not None,
             ):
                 continue
+            # STATIC_QOS >= 1 → fixed k
+            # STATIC_QOS == 0 → random k
+            # STATIC_QOS == -1 → from QOS_FILE, fallback to random
+            static_qos = int(os.environ.get("STATIC_QOS", -1))
+            if static_qos >= 1:
+                k_rand = static_qos
+                ttft_max = self.get_ttft_max(prompt_len, k_rand)
+            elif static_qos == 0:
+                k_rand = self.get_random_kqos(
+                    mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
+                    std=float(os.environ.get("QOS_K_STD", 1.0)),
+                    num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                )
+                ttft_max = self.get_ttft_max(prompt_len, int(k_rand))
+            else:
+                qos = self.get_qos_for_index(ind)
+                if qos is not None:
+                    k_rand, ttft_max = qos
+                else:
+                    k_rand = self.get_random_kqos(
+                        mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
+                        std=float(os.environ.get("QOS_K_STD", 1.0)),
+                        num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                    )
+                    ttft_max = self.get_ttft_max(prompt_len, int(k_rand))
             if image_path := entry.get("image"):
                 mm_content = process_image(image_path)
             elif video_path := entry.get("video"):
@@ -1330,6 +1440,7 @@ class ShareGPTDataset(BenchmarkDataset):
                     multi_modal_data=mm_content,
                     request_id=request_id_prefix + str(ind),
                     k_qos=k_rand,
+                    ttft_max=ttft_max,
                 )
             )
             ind += 1
