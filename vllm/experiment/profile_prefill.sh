@@ -67,7 +67,7 @@ done
 # Aggregate results into the lookup table JSON
 echo ""
 echo "Building $OUTPUT ..."
-python3 "$(dirname "$0")/aggregate_results.py" "$RESULT_DIR" "$OUTPUT" "${SEQ_LENS[*]}" "${K_VALUES[*]}"
+python3 "$(dirname "$0")/build_perf_model.py" "$RESULT_DIR" "$OUTPUT"
 
 echo ""
 echo "Done."

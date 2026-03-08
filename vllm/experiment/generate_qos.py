@@ -42,7 +42,6 @@ def get_perf_model():
         return None
     with open(path) as f:
         raw = json.load(f)
-    import bisect
     table = {}
     for seq_str, k_dict in raw.items():
         table[int(seq_str)] = {int(k): float(v) for k, v in k_dict.items()}
@@ -195,12 +194,16 @@ def main():
     with open(args.output, "w") as f:
         json.dump(assignments, f, indent=2)
 
-    # Print summary
+    print(f"\nSaved {len(assignments)} assignments → {args.output}")
+
+    if not assignments:
+        print("  WARNING: no assignments generated (all prompts filtered out)")
+        return
+
     ks = [a["k_qos"] for a in assignments]
     ttfts = [a["ttft_max"] * 1000 for a in assignments]
     plens = [a["prompt_len"] for a in assignments]
 
-    print(f"\nSaved {len(assignments)} assignments → {args.output}")
     print(f"\n  prompt_len: min={min(plens)} median={sorted(plens)[len(plens)//2]}"
           f" max={max(plens)} mean={sum(plens)/len(plens):.0f}")
     print(f"  k_qos:      min={min(ks)} max={max(ks)}"

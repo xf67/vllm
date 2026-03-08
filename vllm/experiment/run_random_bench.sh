@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-MODEL="/home/xxf/models/olmoe-7B-A1B"
+MODEL=${MODEL:-"/home/xxf/models/olmoe-7B-A1B"}
 ENDPOINT="/v1/completions"
 PORT=${PORT:-8000}
 SEED=42

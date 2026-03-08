@@ -18,8 +18,8 @@
 
 set -euo pipefail
 
-MODEL="/home/xxf/models/olmoe-7B-A1B"
-DATASET_PATH="/home/xxf/NewVLLM/ShareGPT_V3_unfiltered_cleaned_split.json"
+MODEL=${MODEL:-"/home/xxf/models/olmoe-7B-A1B"}
+DATASET_PATH=${DATASET_PATH:-"/home/xxf/NewVLLM/ShareGPT_V3_unfiltered_cleaned_split.json"}
 ENDPOINT="/v1/completions"
 PORT=${PORT:-8000}
 SEED=42
@@ -48,7 +48,8 @@ for rate in "${REQUEST_RATES[@]}"; do
   rate_label=$(echo "$rate" | tr '.' '_')
   result_file="rate_${rate_label}.json"
 
-  STATIC_QOS=-1 QOS_K_MEAN=4 QOS_K_STD=2 \
+  QOS_FILE="${QOS_FILE:-}" STATIC_QOS="${STATIC_QOS:--1}" \
+    QOS_K_MEAN="${QOS_K_MEAN:-4}" QOS_K_STD="${QOS_K_STD:-2}" \
     vllm bench serve \
     --backend vllm \
     --model "$MODEL" \
