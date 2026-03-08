@@ -7,14 +7,14 @@ to avoid certain eager import breakage."""
 
 import importlib.metadata
 import sys
-
+import debugpy, os
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
 
 def main():
-    import debugpy, os, time
+
     # Start the debugger only in the rank 0 process
     if int(os.environ.get('LOCAL_RANK', '0')) == 0 and int(os.environ.get('RUN_DEBUG_PORT', '0')) !=0:
         debugpy.connect(int(os.environ.get('RUN_DEBUG_PORT', '0'))) 

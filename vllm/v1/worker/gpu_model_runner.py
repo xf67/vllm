@@ -159,6 +159,8 @@ from .utils import (
     scatter_mm_placeholders,
 )
 
+# from vllm.utils.cuda_mem_profile import trace_cuda_memory
+
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
     from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
@@ -4185,6 +4187,7 @@ class GPUModelRunner(
         self.encoder_cache.clear()
         gc.collect()
 
+    # @trace_cuda_memory(output_dir="./cuda_mem_trace")
     def capture_model(self) -> int:
         if self.compilation_config.cudagraph_mode == CUDAGraphMode.NONE:
             logger.warning(
