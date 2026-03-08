@@ -16,12 +16,12 @@ SEED=42
 MODE=${1:-"test"}
 INPUT_LEN=${2:-2048}
 OUTPUT_LEN=64
-NUM_PROMPTS=200
+NUM_PROMPTS=256
 
 RESULT_DIR="test/bench_results/random_${MODE}"
 mkdir -p "$RESULT_DIR"
 
-REQUEST_RATES=(4 8 inf)
+REQUEST_RATES=(2 4 8 12 16)
 
 echo "================================================================"
 echo "Random Benchmark — mode: $MODE  input_len: $INPUT_LEN"
@@ -38,7 +38,7 @@ for rate in "${REQUEST_RATES[@]}"; do
   result_file="rate_${rate_label}_in${INPUT_LEN}.json"
 
   QOS_FILE="${QOS_FILE:-}" STATIC_QOS="${STATIC_QOS:--1}" \
-    QOS_K_MEAN="${QOS_K_MEAN:-4}" QOS_K_STD="${QOS_K_STD:-2}" \
+    QOS_K_MEAN="${QOS_K_MEAN:-4}" QOS_K_STD="${QOS_K_STD:-2}" QOS_K_MAX="${QOS_K_MAX:-8}" \
     vllm bench serve \
     --backend vllm \
     --model "$MODEL" \
