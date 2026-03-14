@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import csv
 import itertools
 import time
 from collections import defaultdict
 from collections.abc import Iterable
+from enum import Enum
 from typing import Any
 
 from vllm.config import VllmConfig
@@ -48,6 +50,14 @@ from vllm.v1.core.sched.perf_model import PrefillPerfModel
 from vllm.v1.utils import record_function_or_nullcontext
 
 import os
+
+
+class ScheduleMode(Enum):
+    """Scheduling mode for MoE QoS-aware serving."""
+    FIFO = "fifo"
+    EDF = "edf"
+    TTFT_AGNOSTIC = "ttft_agnostic" # also means throughput maximizing
+
 
 logger = init_logger(__name__)
 
@@ -188,29 +198,270 @@ class Scheduler(SchedulerInterface):
         )
         self.use_pp = self.parallel_config.pipeline_parallel_size > 1
 
-        self.qos_aware = int(os.environ.get('QOS_AWARE', '1')) # 0 for qos_agnostic, 1 for qos_aware+scheduler, 2 for qos_aware+staticK
+        # Scheduling mode: fifo / edf / ttft_agnostic
+        sched_mode_str = os.environ.get('SCHED_MODE', 'fifo').lower()
+        try:
+            self.sched_mode = ScheduleMode(sched_mode_str)
+        except ValueError:
+            raise ValueError(
+                f"Unknown SCHED_MODE: {sched_mode_str}. "
+                f"Valid: {[m.value for m in ScheduleMode]}"
+            )
+        logger.info("Scheduler using mode: %s", self.sched_mode.value)
 
-        # QoS scheduling parameters
-        self.majority_ratio = float(os.environ.get("MAJORITY_RATIO", 0.8))
-        self.min_concurrency = int(os.environ.get("MIN_CONCURRENCY", 8))
+        self.perf_model = PrefillPerfModel()
+
+        # EDF parameters
         self.ttft_safety_factor = float(
             os.environ.get("TTFT_SAFETY_FACTOR", 1.5)
         )
-        self.starvation_timeout = float(
-            os.environ.get("STARVATION_TIMEOUT", 5.0)
+        self.edf_lookahead_steps = int(
+            os.environ.get("EDF_LOOKAHEAD_STEPS", 5)
         )
-        self.high_k_cooldown_duration = float(
-            os.environ.get("HIGH_K_COOLDOWN", 2.0)
+        # EDF k-gate: only admit requests with k > target_k when their
+        # slack is below this fraction of their ttft_max (0 = never gate,
+        # 1 = always gate unless slack < 0).  A value of 0.3 means "admit
+        # high-k requests when they have used up 70% of their deadline budget."
+        self.edf_k_gate_urgency = float(
+            os.environ.get("EDF_K_GATE_URGENCY", 0.3)
         )
-        self.prefill_defer_threshold = int(
-            os.environ.get("PREFILL_DEFER_THRESHOLD", 16)
-        )
-        self.perf_model = PrefillPerfModel()
 
-        # State machine: 0 = LOW_K phase, 1 = HIGH_K phase
-        self.phase = 0
-        self.phase_high_k = 0
-        self.high_k_until = 0.0
+        # TTFT_AGNOSTIC parameters: min batch utilisation before allowing
+        # a k-level increase (ratio of max_num_scheduled_tokens)
+        self.ttft_agnostic_min_batch_ratio = float(
+            os.environ.get("TTFT_AGNOSTIC_MIN_BATCH_RATIO", 0.5)
+        )
+
+        # --- Dispatch metrics logging ---
+        self._dispatch_log_path = os.environ.get("DISPATCH_LOG", "")
+        self._dispatch_log_file = None
+        self._dispatch_log_writer = None
+        self._dispatch_step = 0
+        self._dispatch_t0 = 0.0
+        if self._dispatch_log_path:
+            self._dispatch_log_file = open(self._dispatch_log_path, "w",
+                                           newline="")
+            self._dispatch_log_writer = csv.writer(self._dispatch_log_file)
+            self._dispatch_log_writer.writerow([
+                "step", "timestamp", "elapsed_s",
+                "dispatch_k", "num_running", "num_waiting",
+                "total_scheduled_tokens",
+                "running_mean_k", "running_weighted_mean_k",
+                "waiting_mean_k", "waiting_weighted_mean_k",
+                "num_new_prefills",
+            ])
+            self._dispatch_t0 = time.time()
+            logger.info("Dispatch metrics logging to: %s",
+                        self._dispatch_log_path)
+
+    # ------------------------------------------------------------------
+    # Dispatch metrics
+    # ------------------------------------------------------------------
+
+    def _log_dispatch_metrics(
+        self,
+        num_scheduled_tokens: dict[str, int],
+        scheduled_new_reqs: list[Request],
+        now: float,
+    ) -> None:
+        """Write one row of dispatch metrics to the CSV log."""
+        # dispatch_k = max k_qos among all scheduled requests (= the k
+        # that the forward pass actually runs at)
+        dispatch_k = 0
+        running_k_sum = 0.0
+        running_weighted_k_sum = 0.0
+        running_token_sum = 0
+        for r in self.running:
+            k = self._req_k(r)
+            ntok = num_scheduled_tokens.get(r.request_id, 0)
+            if ntok > 0:
+                dispatch_k = max(dispatch_k, k)
+            running_k_sum += k
+            running_weighted_k_sum += k * ntok
+            running_token_sum += ntok
+
+        running_mean_k = (
+            running_k_sum / len(self.running) if self.running else 0
+        )
+        running_weighted_mean_k = (
+            running_weighted_k_sum / running_token_sum
+            if running_token_sum > 0 else 0
+        )
+
+        waiting_k_sum = 0.0
+        waiting_weighted_k_sum = 0.0
+        waiting_token_sum = 0
+        for r in self.waiting:
+            k = self._req_k(r)
+            ntok = max(r.num_tokens - r.num_computed_tokens, 1)
+            waiting_k_sum += k
+            waiting_weighted_k_sum += k * ntok
+            waiting_token_sum += ntok
+
+        num_waiting = len(self.waiting)
+        waiting_mean_k = waiting_k_sum / num_waiting if num_waiting else 0
+        waiting_weighted_mean_k = (
+            waiting_weighted_k_sum / waiting_token_sum
+            if waiting_token_sum > 0 else 0
+        )
+
+        total_scheduled = sum(num_scheduled_tokens.values())
+
+        self._dispatch_log_writer.writerow([
+            self._dispatch_step,
+            f"{now:.6f}",
+            f"{now - self._dispatch_t0:.4f}",
+            dispatch_k,
+            len(self.running),
+            num_waiting,
+            total_scheduled,
+            f"{running_mean_k:.2f}",
+            f"{running_weighted_mean_k:.2f}",
+            f"{waiting_mean_k:.2f}",
+            f"{waiting_weighted_mean_k:.2f}",
+            len(scheduled_new_reqs),
+        ])
+        self._dispatch_log_file.flush()
+
+    # ------------------------------------------------------------------
+    # QoS / MoE scheduling helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _req_k(request: Request) -> int:
+        extra = request.sampling_params.extra_args
+        return (extra.get('k_qos', 0) if extra else 0) or 0
+
+    @staticmethod
+    def _req_ttft(request: Request) -> float:
+        extra = request.sampling_params.extra_args
+        return (extra.get('ttft_max', 0) if extra else 0) or 0.0
+
+    def _get_current_serving_k(self) -> int:
+        """Max k_qos among currently running requests."""
+        if not self.running:
+            return 0
+        return max((self._req_k(r) for r in self.running), default=0)
+
+    def _predict_future_serving_k(self, steps_ahead: int) -> int:
+        """Predict serving k after *steps_ahead* decode steps.
+
+        Requests with few remaining output tokens will likely finish,
+        potentially reducing the batch k.
+        """
+        if not self.running:
+            return 0
+        future_k_vals: list[int] = []
+        for r in self.running:
+            remaining_output = r.max_tokens - r.num_output_tokens
+            if remaining_output > steps_ahead:
+                future_k_vals.append(self._req_k(r))
+        return max(future_k_vals) if future_k_vals else 0
+
+    def _edf_slack(
+        self, r: Request, serving_k: int, now: float,
+    ) -> float:
+        """Compute EDF slack (seconds) for a single request.
+
+        slack = ttft_deadline − elapsed − estimated_prefill.
+        Returns float('inf') for requests without a TTFT deadline.
+        """
+        req_ttft = self._req_ttft(r)
+        if req_ttft <= 0:
+            return float('inf')
+
+        req_k = self._req_k(r)
+        effective_k = max(serving_k, req_k)
+        est_prefill = (
+            self.perf_model.predict(r.num_prompt_tokens, effective_k)
+            / 1000.0
+        ) if self.perf_model.enabled else 0.0
+
+        elapsed = now - r.arrival_time
+        return req_ttft - elapsed - est_prefill * self.ttft_safety_factor
+
+    def _reorder_waiting_edf(
+        self, current_serving_k: int, now: float
+    ) -> None:
+        """Reorder waiting queue: k-group-aware EDF.
+
+        Strategy:
+        1. Group requests by k_qos.
+        2. Within each group, sort by EDF urgency (tightest deadline first).
+        3. Order groups by k ascending (low-k first = cheaper batches).
+        4. Exception: if any request in a higher-k group is *critically*
+           urgent (slack < 0, i.e. already past its estimated deadline),
+           promote that entire k-group before the normal low-k groups so
+           the urgent request gets scheduled before it's too late.
+
+        This preserves k-homogeneity within each batch (like FIFO) while
+        still reacting to imminent deadline misses across k-groups.
+        """
+        if not self.waiting:
+            return
+
+        predicted_k = self._predict_future_serving_k(
+            self.edf_lookahead_steps
+        )
+        est_serving_k = (
+            predicted_k if predicted_k > 0 else current_serving_k
+        )
+
+        reqs: list[Request] = []
+        while self.waiting:
+            reqs.append(self.waiting.pop_request())
+
+        # --- Step 1: bucket by k_qos ---
+        k_groups: dict[int, list[Request]] = defaultdict(list)
+        for r in reqs:
+            k_groups[self._req_k(r)].append(r)
+
+        # --- Step 2: within each group sort by EDF urgency ---
+        for k, group in k_groups.items():
+            group_serving_k = max(est_serving_k, k)
+            group.sort(
+                key=lambda r, sk=group_serving_k: self._edf_slack(
+                    r, sk, now
+                )
+            )
+
+        # --- Step 3: order k-groups ---
+        # Critical groups (min slack < 0) are promoted to the front,
+        # ordered by their most-urgent request's slack.
+        # Normal groups follow in k-ascending order.
+        critical: list[tuple[float, int]] = []
+        normal: list[int] = []
+
+        for k in sorted(k_groups.keys()):
+            group = k_groups[k]
+            min_slack = self._edf_slack(group[0], max(est_serving_k, k), now)
+            if min_slack < 0:
+                critical.append((min_slack, k))
+            else:
+                normal.append(k)
+
+        critical.sort()  # most urgent (most negative slack) first
+
+        # --- Step 4: rebuild the queue ---
+        for _, k in critical:
+            for r in k_groups[k]:
+                self.waiting.add_request(r)
+        for k in normal:
+            for r in k_groups[k]:
+                self.waiting.add_request(r)
+
+    def _reorder_waiting_ttft_agnostic(self) -> None:
+        """Reorder waiting queue by k_qos ascending for max throughput."""
+        if not self.waiting:
+            return
+
+        reqs: list[Request] = []
+        while self.waiting:
+            reqs.append(self.waiting.pop_request())
+
+        reqs.sort(key=lambda r: self._req_k(r))
+        for r in reqs:
+            self.waiting.add_request(r)
 
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
@@ -420,24 +671,27 @@ class Scheduler(SchedulerInterface):
         # skipped and put back at the head of the waiting queue later
         skipped_waiting_requests = create_request_queue(self.policy)
 
-        dominant_k = 0
-        if self.qos_aware == 1 and self.running:
-            sorted_ks = sorted(
-                r.sampling_params.extra_args.get('k_qos', 0)
-                for r in self.running
-            )
-            majority_index = min(
-                max(int(len(sorted_ks) * self.majority_ratio), 0),
-                len(sorted_ks) - 1,
-            )
-            dominant_k = sorted_ks[majority_index] or 0
-
+        # === Mode-specific preparation for waiting requests ===
         now = time.time()
+        current_serving_k = self._get_current_serving_k()
 
-        # State machine: HIGH_K → LOW_K when cooldown expires
-        if self.phase == 1 and now >= self.high_k_until:
-            self.phase = 0
-            self.phase_high_k = 0
+        if self.sched_mode == ScheduleMode.EDF:
+            self._reorder_waiting_edf(current_serving_k, now)
+        elif self.sched_mode == ScheduleMode.TTFT_AGNOSTIC:
+            self._reorder_waiting_ttft_agnostic()
+
+        # EDF: the k that running requests will converge to once near-
+        # finished high-k decode tasks drain.  We gate new prefills whose
+        # k exceeds this target so the batch k can actually decrease.
+        edf_target_k = (
+            self._predict_future_serving_k(self.edf_lookahead_steps)
+            if self.sched_mode == ScheduleMode.EDF
+            else 0
+        )
+        # Tracks the max k in the current batch (for TTFT_AGNOSTIC barrier).
+        # Initialised to current_serving_k because running decode requests
+        # are already part of the batch.
+        ttft_agnostic_batch_k = current_serving_k
 
         # Next, schedule the WAITING requests.
         if not preempted_reqs:
@@ -447,77 +701,46 @@ class Scheduler(SchedulerInterface):
 
                 request = self.waiting.peek_request()
 
-                if self.qos_aware == 1:
-                    req_k = request.sampling_params.extra_args.get(
-                        'k_qos', 0)
-                    req_ttft_max = request.sampling_params.extra_args.get(
-                        'ttft_max', 0)
-                    est_new_tokens = max(
-                        request.num_tokens - request.num_computed_tokens, 1)
-                    is_heavy = (
-                        est_new_tokens > self.prefill_defer_threshold)
-
-                    allow_admission = True
-
-                    # ====== State machine admission ======
-
-                    if self.phase == 0:
-                        # LOW_K phase: block high-k requests
-                        if dominant_k > 0 and req_k > dominant_k:
-                            allow_admission = False
-
-                    else:
-                        # HIGH_K phase: admit high-k + low-k decode,
-                        #               block low-k prefill
-                        if req_k >= self.phase_high_k:
-                            pass  # admit high-k
-                        elif not is_heavy:
-                            pass  # admit low-k decode (cheap)
+                # --- TTFT_AGNOSTIC: k-group barrier ---
+                # When we are about to increase the batch k, check whether
+                # the batch is already well-utilised.  If so, stop here and
+                # let the higher-k requests form their own batch in the next
+                # scheduling step.  Otherwise merge them (carry-leftover).
+                if self.sched_mode == ScheduleMode.TTFT_AGNOSTIC:
+                    req_k = self._req_k(request)
+                    if (req_k > ttft_agnostic_batch_k
+                            and ttft_agnostic_batch_k > 0):
+                        batch_util = (
+                            self.max_num_scheduled_tokens - token_budget)
+                        if batch_util >= (
+                                self.max_num_scheduled_tokens
+                                * self.ttft_agnostic_min_batch_ratio):
+                            break
+                    ttft_agnostic_batch_k = max(
+                        ttft_agnostic_batch_k, req_k)
+                # --- EDF: k-aware admission control ---
+                # Gate requests whose k exceeds edf_target_k (the predicted
+                # future batch k after near-finished high-k decodes drain).
+                # Admitting such a request would prevent the batch k from
+                # dropping, penalising all concurrent requests.  Only let
+                # it through when its deadline is urgent enough.
+                if self.sched_mode == ScheduleMode.EDF and edf_target_k > 0:
+                    req_k = self._req_k(request)
+                    if req_k > edf_target_k:
+                        req_ttft = self._req_ttft(request)
+                        if req_ttft > 0:
+                            slack = self._edf_slack(
+                                request, edf_target_k, now)
+                            urgent = (
+                                slack < req_ttft * self.edf_k_gate_urgency
+                            )
                         else:
-                            allow_admission = False  # defer low-k prefill
-
-                    # ====== Override rules (both phases) ======
-
-                    if not allow_admission:
-                        # Rule 2: TTFT deadline break-in
-                        if (req_ttft_max > 0
-                                and self.perf_model.enabled):
-                            elapsed = now - request.arrival_time
-                            remaining = req_ttft_max - elapsed
-                            est_prefill = self.perf_model.predict(
-                                request.num_prompt_tokens, req_k,
-                            ) / 1000.0  # ms → s
-                            if (remaining
-                                    < est_prefill * self.ttft_safety_factor):
-                                allow_admission = True
-
-                        # Rule 3: starvation fallback
-                        if (not allow_admission
-                                and self.starvation_timeout > 0
-                                and (now - request.arrival_time)
-                                > self.starvation_timeout):
-                            allow_admission = True
-
-                    # Transition LOW_K → HIGH_K on break-in
-                    if (allow_admission
-                            and self.phase == 0
-                            and req_k > dominant_k
-                            and dominant_k > 0):
-                        self.phase = 1
-                        self.phase_high_k = req_k
-                        self.high_k_until = (
-                            now + self.high_k_cooldown_duration)
-                        dominant_k = req_k
-
-                    # Rule 4: low concurrency — avoid GPU idling
-                    if (not allow_admission
-                            and len(self.running) < self.min_concurrency):
-                        allow_admission = True
-
-                    if not allow_admission:
-                        self.waiting.pop_request()
-                        skipped_waiting_requests.prepend_request(request)
-                        continue
+                            urgent = False
+                        if not urgent:
+                            self.waiting.pop_request()
+                            skipped_waiting_requests.prepend_request(request)
+                            continue
+                # FIFO: pure FCFS, no admission gating.
 
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
@@ -745,8 +968,6 @@ class Scheduler(SchedulerInterface):
                         self.encoder_cache_manager.allocate(request, i)
                         if self.ec_connector is not None:
                             self.ec_connector.update_state_after_alloc(request, i)
-                if self.qos_aware==1 and dominant_k == 0: # 在第一次启动的时候需要
-                    dominant_k = req_k
         # Put back any skipped requests at the head of the waiting queue
         if skipped_waiting_requests:
             self.waiting.prepend_requests(skipped_waiting_requests)
@@ -828,6 +1049,12 @@ class Scheduler(SchedulerInterface):
                 scheduler_output
             )
             scheduler_output.ec_connector_metadata = ec_meta
+
+        # --- Dispatch metrics logging ---
+        if self._dispatch_log_writer is not None:
+            self._dispatch_step += 1
+            self._log_dispatch_metrics(
+                num_scheduled_tokens, scheduled_new_reqs, now)
 
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)

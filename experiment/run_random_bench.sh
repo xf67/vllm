@@ -1,10 +1,17 @@
 #!/bin/bash
-# Quick benchmark with random long prompts to verify k-segregation effect.
+# Quick benchmark with random / random2 (trace-driven) prompts.
 #
 # Prerequisites: vllm server running with --no-enable-prefix-caching
 #
 # Usage:
-#   bash test/normal/run_random_bench.sh [MODE_LABEL] [INPUT_LEN]
+#   bash run_random_bench.sh [MODE_LABEL] [INPUT_LEN]
+#
+# Environment variables:
+#   DATASET_NAME  : "random" (default) or "random2" (trace-driven)
+#   TRACE_CSV     : path to trace CSV (required when DATASET_NAME=random2)
+#   NUM_PROMPTS   : number of prompts (default 256)
+#   OUTPUT_LEN    : output tokens per request (default 64, ignored for random2)
+#   REQUEST_RATES : space-separated rates (default "2 4 8 12 16")
 
 set -euo pipefail
 
@@ -15,21 +22,41 @@ SEED=42
 
 MODE=${1:-"test"}
 INPUT_LEN=${2:-2048}
-OUTPUT_LEN=64
-NUM_PROMPTS=256
+OUTPUT_LEN=${OUTPUT_LEN:-64}
+NUM_PROMPTS=${NUM_PROMPTS:-256}
+DATASET_NAME=${DATASET_NAME:-"random2"}
+TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered.csv"}
 
-RESULT_DIR="test/bench_results/random_${MODE}"
+RESULT_DIR="test/bench_results/${DATASET_NAME}_${MODE}"
 mkdir -p "$RESULT_DIR"
 
-REQUEST_RATES=(2 4 8 12 16)
+if [ "$MODE" = "ttft_agnostic" ]; then
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
+else
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-8 12 16}"
+fi
 
 echo "================================================================"
-echo "Random Benchmark — mode: $MODE  input_len: $INPUT_LEN"
-echo "Num prompts: $NUM_PROMPTS  output_len: $OUTPUT_LEN"
+echo "Benchmark — dataset: $DATASET_NAME  mode: $MODE"
+if [ "$DATASET_NAME" = "random2" ]; then
+  echo "Trace CSV: $TRACE_CSV"
+else
+  echo "input_len: $INPUT_LEN  output_len: $OUTPUT_LEN"
+fi
+echo "Num prompts: $NUM_PROMPTS"
 echo "Request rates: ${REQUEST_RATES[*]}"
 echo "Results: $RESULT_DIR"
 echo "================================================================"
 echo ""
+
+TRACE_ARGS=""
+if [ "$DATASET_NAME" = "random2" ]; then
+  if [ -z "$TRACE_CSV" ]; then
+    echo "ERROR: TRACE_CSV is required for random2 dataset" >&2
+    exit 1
+  fi
+  TRACE_ARGS="--trace-csv $TRACE_CSV"
+fi
 
 for rate in "${REQUEST_RATES[@]}"; do
   echo "---- request-rate=$rate ----"
@@ -43,7 +70,7 @@ for rate in "${REQUEST_RATES[@]}"; do
     --backend vllm \
     --model "$MODEL" \
     --endpoint "$ENDPOINT" \
-    --dataset-name random \
+    --dataset-name "$DATASET_NAME" \
     --num-prompts $NUM_PROMPTS \
     --random-input-len $INPUT_LEN \
     --random-output-len $OUTPUT_LEN \
@@ -52,7 +79,8 @@ for rate in "${REQUEST_RATES[@]}"; do
     --port "$PORT" \
     --save-result \
     --result-dir "$RESULT_DIR" \
-    --result-filename "$result_file"
+    --result-filename "$result_file" \
+    $TRACE_ARGS
 
   echo ""
 done

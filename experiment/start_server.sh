@@ -1,0 +1,124 @@
+#!/bin/bash
+# ============================================================
+#  MoE QoS-aware vLLM Server Launcher
+# ============================================================
+#
+#  Usage:
+#    bash start_server.sh [MODE]
+#
+#  MODE = fifo (default) | edf | ttft_agnostic
+#
+#  Examples:
+#    bash start_server.sh fifo
+#    bash start_server.sh edf
+#    bash start_server.sh ttft_agnostic
+#
+# ============================================================
+set -euo pipefail
+
+# -------------------- Model & Server -----------------------
+MODEL="${MODEL:-/home/xxf/models/olmoe-7B-A1B}"
+PORT="${PORT:-8000}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
+
+# -------------------- Scheduling Mode ----------------------
+# fifo          : 纯FCFS，forward时k=batch中max(k_qos)
+# edf           : Earliest-Deadline-First，按TTFT紧迫度排序
+# ttft_agnostic : 离线最大吞吐，按k_qos分组batch
+SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
+
+# -------------------- QoS / K 相关 -------------------------
+# QOS_AWARE: model runner层面是否将k_qos传给forward (bool)
+#   0 = 不传k_qos（纯vllm默认，忽略所有QoS）
+#   1 = 传k_qos，forward使用batch中max(k_qos)
+QOS_AWARE="${QOS_AWARE:-1}"
+
+# QOS_K_LIST: CUDA graph capture的k范围
+#   格式: r<start>,<end>  (range) 或 k1,k2,k3 (list)
+#   例: r1,8 表示 k=1..8;  2,4,6,8 表示捕获这4个k
+QOS_K_LIST="${QOS_K_LIST:-r1,8}"
+
+# -------------------- Perf Model (EDF) ---------------------
+# prefill时间预测模型JSON路径，EDF模式必需
+PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/olmoe_perf_model.json}"
+
+# -------------------- EDF 参数 -----------------------------
+# TTFT安全系数: slack < est_prefill * factor 时紧急调度
+TTFT_SAFETY_FACTOR="${TTFT_SAFETY_FACTOR:-1.5}"
+# 前瞻步数: 预测多少步后高k decode任务可能结束
+EDF_LOOKAHEAD_STEPS="${EDF_LOOKAHEAD_STEPS:-5}"
+# k准入门控: 当request的k > 预测未来batch_k时，
+# 只在 slack < ttft_max * urgency 时才放行（0.3 = 已消耗70%时间预算才放行）
+EDF_K_GATE_URGENCY="${EDF_K_GATE_URGENCY:-0.3}"
+
+# -------------------- TTFT_AGNOSTIC 参数 -------------------
+# batch利用率阈值: 当已用token >= max_tokens * ratio时, 不再提升k等级
+TTFT_AGNOSTIC_MIN_BATCH_RATIO="${TTFT_AGNOSTIC_MIN_BATCH_RATIO:-0.5}"
+
+# -------------------- Compilation / CUDAGraph --------------
+CUDAGRAPH_MODE="${CUDAGRAPH_MODE:-PIECEWISE}"
+SHARE_ATTN_ACROSS_TOPK="${SHARE_ATTN_ACROSS_TOPK:-true}"
+
+# -------------------- Dispatch Metrics Log -----------------
+# 设置后，scheduler每步写一行CSV，记录dispatch K、队列K分布等
+# 留空则不记录
+DISPATCH_LOG="${DISPATCH_LOG:-/home/xxf/NewVLLM/vllm/test/log}"
+
+# -------------------- Debug & Profiling --------------------
+# 取消注释以下行来启用
+# export VLLM_TORCH_PROFILER_DIR=/home/xxf/NewVLLM/traces
+# export RUN_DEBUG_PORT=5678
+# export VLLM_DISABLE_COMPILE_CACHE=1
+
+VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-INFO}"
+
+
+# ============================================================
+#  Export all env vars
+# ============================================================
+export SCHED_MODE
+export QOS_AWARE
+export QOS_K_LIST
+export PERF_MODEL_PATH
+export TTFT_SAFETY_FACTOR
+export EDF_LOOKAHEAD_STEPS
+export EDF_K_GATE_URGENCY
+export TTFT_AGNOSTIC_MIN_BATCH_RATIO
+export DISPATCH_LOG
+export VLLM_LOGGING_LEVEL
+
+# ============================================================
+#  Print config summary
+# ============================================================
+echo "============================================================"
+echo "  MoE QoS vLLM Server"
+echo "============================================================"
+echo "  Model:             $MODEL"
+echo "  Port:              $PORT"
+echo "  GPU Mem Util:      $GPU_MEM_UTIL"
+echo "  Sched Mode:        $SCHED_MODE"
+echo "  QOS_AWARE:         $QOS_AWARE"
+echo "  QOS_K_LIST:        $QOS_K_LIST"
+echo "  Perf Model:        $PERF_MODEL_PATH"
+echo "------------------------------------------------------------"
+echo "  EDF params:"
+echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"
+echo "    EDF_LOOKAHEAD_STEPS:      $EDF_LOOKAHEAD_STEPS"
+echo "    EDF_K_GATE_URGENCY:       $EDF_K_GATE_URGENCY"
+echo "  TTFT_AGNOSTIC params:"
+echo "    MIN_BATCH_RATIO:          $TTFT_AGNOSTIC_MIN_BATCH_RATIO"
+echo "  Dispatch Log:      ${DISPATCH_LOG:-<disabled>}"
+echo "------------------------------------------------------------"
+echo "  CUDAGraph Mode:    $CUDAGRAPH_MODE"
+echo "  Share Attn TopK:   $SHARE_ATTN_ACROSS_TOPK"
+echo "  Logging:           $VLLM_LOGGING_LEVEL"
+echo "============================================================"
+echo ""
+
+# ============================================================
+#  Launch
+# ============================================================
+exec vllm serve "$MODEL" \
+    --port "$PORT" \
+    --gpu-memory-utilization "$GPU_MEM_UTIL" \
+    --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}"
