@@ -627,7 +627,7 @@ class RandomDataset(BenchmarkDataset):
                 k_rand = self.get_random_kqos(
                     mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
                     std=float(os.environ.get("QOS_K_STD", 1.0)),
-                    num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                    num_experts=int(os.environ.get("QOS_K_MAX", 8))
                 )
                 ttft_max_val = self.get_ttft_max(total_input_len, int(k_rand))
             else:
@@ -638,7 +638,7 @@ class RandomDataset(BenchmarkDataset):
                     k_rand = self.get_random_kqos(
                         mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
                         std=float(os.environ.get("QOS_K_STD", 1.0)),
-                        num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                        num_experts=int(os.environ.get("QOS_K_MAX", 8))
                     )
                     ttft_max_val = self.get_ttft_max(
                         total_input_len, int(k_rand))
@@ -801,6 +801,81 @@ class RandomDataset(BenchmarkDataset):
         )
         total_input_len = len(adjusted_token_sequence)
         return prompt, total_input_len, token_mismatch
+
+
+# -----------------------------------------------------------------------------
+# Trace-driven Random Dataset (random2)
+# -----------------------------------------------------------------------------
+
+
+class RandomTraceDataset(RandomDataset):
+    """Random dataset whose input/output lengths come from a real trace CSV.
+
+    The CSV must have columns ``ContextTokens`` and ``GeneratedTokens``
+    (like the Azure LLM Inference Trace).  Rows are sampled (with
+    replacement when num_requests > rows in the trace) to provide
+    per-request lengths.  Everything else — prompt generation, QoS,
+    Poisson arrival — is inherited from RandomDataset.
+    """
+
+    def __init__(self, trace_csv: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.trace_csv = trace_csv
+        self._trace_input_lens: np.ndarray | None = None
+        self._trace_output_lens: np.ndarray | None = None
+        self._load_trace()
+
+    def _load_trace(self) -> None:
+        import csv as csv_mod
+        input_lens: list[int] = []
+        output_lens: list[int] = []
+        with open(self.trace_csv) as f:
+            reader = csv_mod.DictReader(f)
+            for row in reader:
+                ctx = int(row["ContextTokens"])
+                gen = int(row["GeneratedTokens"])
+                if ctx >= 1 and gen >= 1:
+                    input_lens.append(ctx)
+                    output_lens.append(gen)
+        if not input_lens:
+            raise ValueError(
+                f"No valid rows in trace CSV: {self.trace_csv}")
+        self._trace_input_lens = np.array(input_lens)
+        self._trace_output_lens = np.array(output_lens)
+        logger.info(
+            "Loaded %d trace entries from %s  "
+            "(input: mean=%.0f, median=%.0f, max=%d; "
+            "output: mean=%.0f, median=%.0f, max=%d)",
+            len(input_lens), self.trace_csv,
+            np.mean(self._trace_input_lens),
+            np.median(self._trace_input_lens),
+            np.max(self._trace_input_lens),
+            np.mean(self._trace_output_lens),
+            np.median(self._trace_output_lens),
+            np.max(self._trace_output_lens),
+        )
+
+    def get_sampling_params(
+        self,
+        num_requests: int,
+        range_ratio: float,
+        input_len: int,
+        output_len: int,
+        tokenizer: PreTrainedTokenizerBase,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Sample input/output lengths from the trace instead of uniform."""
+        n_trace = len(self._trace_input_lens)
+        indices = self._rng.integers(0, n_trace, size=num_requests)
+        input_lens = self._trace_input_lens[indices].copy()
+        output_lens = self._trace_output_lens[indices].copy()
+
+        num_special = int(tokenizer.num_special_tokens_to_add())
+        input_lens = np.maximum(input_lens - num_special, 1)
+        output_lens = np.maximum(output_lens, 1)
+
+        offsets = self._rng.integers(
+            0, tokenizer.vocab_size, size=num_requests)
+        return input_lens, output_lens, offsets
 
 
 # -----------------------------------------------------------------------------
@@ -1490,6 +1565,7 @@ def add_dataset_parser(parser: FlexibleArgumentParser):
             "random",
             "random-mm",
             "random-rerank",
+            "random2",
             "hf",
             "custom",
             "prefix_repetition",
@@ -1639,6 +1715,16 @@ def add_dataset_parser(parser: FlexibleArgumentParser):
         help=(
             "Whether the model supports reranking natively."
             " Only used for reranker benchmark."
+        ),
+    )
+    random_group.add_argument(
+        "--trace-csv",
+        type=str,
+        default=None,
+        help=(
+            "Path to a CSV trace file with columns ContextTokens and "
+            "GeneratedTokens (e.g. Azure LLM Inference Trace). "
+            "Used only for dataset-name=random2."
         ),
     )
 
@@ -2029,6 +2115,21 @@ def get_samples(args, tokenizer) -> list[SampleRequest]:
                 limit_mm_per_prompt=args.random_mm_limit_mm_per_prompt,
                 num_mm_items_range_ratio=args.random_mm_num_mm_items_range_ratio,
                 bucket_config=args.random_mm_bucket_config,
+                request_id_prefix=args.request_id_prefix,
+                no_oversample=args.no_oversample,
+            ),
+            "random2": lambda: RandomTraceDataset(
+                trace_csv=args.trace_csv,
+                random_seed=args.seed,
+                dataset_path=args.dataset_path,
+                disable_shuffle=args.disable_shuffle,
+            ).sample(
+                tokenizer=tokenizer,
+                num_requests=args.num_prompts,
+                prefix_len=args.random_prefix_len,
+                input_len=args.random_input_len,
+                output_len=args.random_output_len,
+                range_ratio=args.random_range_ratio,
                 request_id_prefix=args.request_id_prefix,
                 no_oversample=args.no_oversample,
             ),
