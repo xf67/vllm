@@ -165,15 +165,52 @@ class BenchmarkDataset(ABC):
         num_experts: int
     ) -> int:
         """
-        Get K-Qos, sample from normal distribution
-        输入均值和标准差, 以及当前模型最多能有多少experts
-        """
-        if std < 0:
-            raise ValueError("std should >0 for normal distribution")
-        sample = np.random.normal(loc=mean, scale=std)
-        k = round(sample)
-        return min(max(1, k),num_experts)
+        Get K-Qos.
 
+        环境变量:
+            KQOS_DIST=normal
+                mean -> 均值
+                std  -> 标准差
+
+            KQOS_DIST=uniform
+                mean -> 最小值 min
+                std  -> 最大值 max
+                在 [min, max] 上做离散均匀采样
+
+        返回值始终被裁剪到 [1, num_experts]
+        """
+        if num_experts < 1:
+            raise ValueError("num_experts should >= 1")
+
+        dist = os.getenv("KQOS_DIST", "normal").strip().lower()
+
+        if dist == "normal":
+            if std < 0:
+                raise ValueError("std should >= 0 for normal distribution")
+            sample = np.random.normal(loc=mean, scale=std)
+            k = round(sample)
+            return min(max(1, k), num_experts)
+
+        elif dist == "uniform":
+            k_min = round(mean)
+            k_max = round(std)
+
+            if k_min > k_max:
+                raise ValueError("for uniform distribution, mean(min) should <= std(max)")
+
+            k_min = max(1, k_min)
+            k_max = min(num_experts, k_max)
+
+            if k_min > k_max:
+                raise ValueError("valid uniform sampling range is empty after clipping")
+
+            return np.random.randint(k_min, k_max + 1)
+
+        else:
+            raise ValueError(
+                f"Unsupported KQOS_DIST={dist}, expected 'normal' or 'uniform'"
+            )
+    
     _bench_perf_model = None
     _qos_assignments: list[dict] | None = None
     _qos_cursor: int = 0
@@ -662,7 +699,7 @@ class RandomDataset(BenchmarkDataset):
                     k_rand = self.get_random_kqos(
                         mean=float(os.environ.get("QOS_K_MEAN",4.0)),
                         std=float(os.environ.get("QOS_K_STD",1.0)),
-                        num_experts=int(os.environ.get("QOS_K_MAX",32))
+                        num_experts=int(os.environ.get("QOS_K_MAX",8))
                     )
                 else:
                     k_rand = os.environ.get("STATIC_QOS",6)
@@ -1484,7 +1521,7 @@ class ShareGPTDataset(BenchmarkDataset):
                 k_rand = self.get_random_kqos(
                     mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
                     std=float(os.environ.get("QOS_K_STD", 1.0)),
-                    num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                    num_experts=int(os.environ.get("QOS_K_MAX", 8))
                 )
                 ttft_max = self.get_ttft_max(prompt_len, int(k_rand))
             else:
@@ -1495,7 +1532,7 @@ class ShareGPTDataset(BenchmarkDataset):
                     k_rand = self.get_random_kqos(
                         mean=float(os.environ.get("QOS_K_MEAN", 4.0)),
                         std=float(os.environ.get("QOS_K_STD", 1.0)),
-                        num_experts=int(os.environ.get("QOS_K_MAX", 32))
+                        num_experts=int(os.environ.get("QOS_K_MAX", 8))
                     )
                     ttft_max = self.get_ttft_max(prompt_len, int(k_rand))
             if image_path := entry.get("image"):

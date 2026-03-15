@@ -23,33 +23,45 @@ SEED=42
 MODE=${1:-"test"}
 INPUT_LEN=${2:-2048}
 OUTPUT_LEN=${OUTPUT_LEN:-64}
-NUM_PROMPTS=${NUM_PROMPTS:-512}
+NUM_PROMPTS=${NUM_PROMPTS:-1024}
 DATASET_NAME=${DATASET_NAME:-"random2"}
-TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered.csv"}
+TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered2.csv"}
 
-RESULT_DIR="test/bench_results/${DATASET_NAME}_${MODE}"
+RESULT_DIR="${RESULT_DIR:-test/bench_results/${DATASET_NAME}_${MODE}}"
 mkdir -p "$RESULT_DIR"
 
 if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
 else
-  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-8 12 16}"
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-40}"
 fi
 
 # TTFT_MAX_STATIC   >0 → fixed value (seconds) for all requests
 # PERF_MODEL_PATH   path to perf_model.json (enables calibrated mode)
 # TTFT_MULTIPLIER   prefill time multiplier (default 3.0)
-# TTFT_QUEUE_MS     extra queue budget in ms (default 50.0)
+# TTFT_QUEUE_MS     extra queue budget in ms (default 5.0)
 # TTFT_JITTER_LOW   random multiplier lower bound (default 0.8)
 # TTFT_JITTER_HIGH  random multiplier upper bound (default 1.5)
 
-unset TTFT_MAX_STATIC 
-export PERF_MODEL_PATH="/home/xxf/NewVLLM/test/olmoe_perf_model.json"
-export TTFT_MULTIPLIER=3
-export TTFT_QUEUE_MS=5
-export TTFT_JITTER_LOW=1
-export TTFT_JITTER_HIGH=1.5
+unset TTFT_MAX_STATIC
 
+export PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/olmoe_perf_model.json}"
+export TTFT_MULTIPLIER="${TTFT_MULTIPLIER:-2}"
+export TTFT_QUEUE_MS="${TTFT_QUEUE_MS:-10}"
+export TTFT_JITTER_LOW="${TTFT_JITTER_LOW:-1}"
+export TTFT_JITTER_HIGH="${TTFT_JITTER_HIGH:-1.5}"
+
+# default: normal 4 1 8
+export KQOS_DIST="${KQOS_DIST:-normal}"
+export QOS_K_MEAN="${QOS_K_MEAN:-4}"
+export QOS_K_STD="${QOS_K_STD:-1}"
+export QOS_K_MAX="${QOS_K_MAX:-8}"
+
+# 在uniform的时候，mean和std分别表示min和max
+# export KQOS_DIST="uniform"
+# export QOS_K_MEAN=1
+# export QOS_K_STD=8
+# export QOS_K_MAX=8
 
 echo "================================================================"
 echo "Benchmark — dataset: $DATASET_NAME  mode: $MODE"
