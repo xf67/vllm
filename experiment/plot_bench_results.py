@@ -146,7 +146,7 @@ def plot_per_k_comparison(all_runs, output_dir):
         if not all_ks:
             continue
 
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig, axes = plt.subplots(3, 2, figsize=(18, 10))
         fig.suptitle(f"Per-k Metrics  (rate={rate})", fontsize=14, fontweight="bold")
 
         n_groups = len(all_ks)
@@ -159,6 +159,8 @@ def plot_per_k_comparison(all_runs, output_dir):
             ("ttft_mean_ms", "Mean TTFT (ms)"),
             ("prefill_mean_ms", "Mean Prefill (ms)"),
             ("queue_wait_mean_ms", "Mean Queue Wait (ms)"),
+            ("norm_ttft_mean", "Normed TTFT (ms)"),
+            ("count", "Sample Count"),
         ]
         for ax, (mk, mtitle) in zip(axes.flat, sub_metrics):
             for i, (label, runs) in enumerate(all_runs):
