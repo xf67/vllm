@@ -33,7 +33,7 @@ BASE_DIR.mkdir(parents=True, exist_ok=True)
 REQUEST_RATES = ["20", "30", "40", "inf"]
 
 # normal 分布下扫描的 std
-NORMAL_QOS_K_STDS = ["0.5", "0.75", "1.0"]
+NORMAL_QOS_K_STDS = ["3","2","1"]
 
 # uniform 分布下的配置
 # 注意：在你的 bench 逻辑里，uniform 时 mean=min, std=max
@@ -46,7 +46,7 @@ UNIFORM_CASES = [
 ]
 
 FIFO_SAFE_SWAP_WINDOWS = ["2", "4", "6", "8", "12", "16"]
-TTFT_AGNOSTIC_RATIOS = ["3","2","1"]
+TTFT_AGNOSTIC_RATIOS = ["0.5", "0.75", "0.9"]
 
 COMMON_ENV = {
     "MODEL": MODEL,
