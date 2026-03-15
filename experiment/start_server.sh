@@ -90,6 +90,7 @@ export EDF_K_GATE_URGENCY
 export TTFT_AGNOSTIC_MIN_BATCH_RATIO
 export DISPATCH_LOG
 export VLLM_LOGGING_LEVEL
+export FIFO_SAFE_SWAP_WINDOW
 
 # ============================================================
 #  Print config summary
