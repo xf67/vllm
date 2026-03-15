@@ -237,7 +237,7 @@ class Scheduler(SchedulerInterface):
         # Look at at most this many requests (including the head) and allow
         # one safe local swap that lowers the current dispatch K.
         self.fifo_safe_swap_window = int(
-            os.environ.get("FIFO_SAFE_SWAP_WINDOW", 2)
+            os.environ.get("FIFO_SAFE_SWAP_WINDOW", 8)
         )
 
         # --- Dispatch metrics logging ---
@@ -727,9 +727,33 @@ class Scheduler(SchedulerInterface):
         ttft_agnostic_batch_k = current_serving_k
         # For FIFO_SWAP
         current_batch_k = current_serving_k
+        # print(f"[DDDBUG] current_batch_k {current_batch_k}")
+
+        # FIFO_SWAP:
+        # Take a small prefix from the waiting queue, sort it by request k,
+        # then put it back to the head. Smaller k comes first.
+        if self.sched_mode == ScheduleMode.FIFO_SAFE_SWAP:
+            reqs: list[Request] = []
+            while self.waiting and len(reqs) < self.fifo_safe_swap_window:
+                reqs.append(self.waiting.pop_request())
+
+            if len(reqs) >= 2:
+                orig_ks = [self._req_k(req) for req in reqs]
+
+                # Sort by k ascending. Python sort is stable, so FIFO is preserved
+                # among requests with the same k.
+                reqs.sort(key=self._req_k)
+
+                # print(
+                #     f"[DDDBUG] k-sort {orig_ks} -> {[self._req_k(req) for req in reqs]}"
+                # )
+
+            self.waiting.prepend_requests(reqs)
+
 
         # Next, schedule the WAITING requests.
         if not preempted_reqs:
+            # print(f"[DDDBUG] waiting {len(self.waiting)} token_budget {token_budget} max_token {self.max_num_scheduled_tokens}")
             while self.waiting and token_budget > 0:
                 if len(self.running) == self.max_num_running_reqs:
                     break
@@ -775,81 +799,7 @@ class Scheduler(SchedulerInterface):
                             self.waiting.pop_request()
                             skipped_waiting_requests.prepend_request(request)
                             continue
-                # FIFO: pure FCFS, no admission gating.
-
-                # FIFO_SAFE_SWAP: 
-                # Keep FIFO by default. Only when the current head would raise
-                # the already-established batch K, search a small window for a
-                # lower-k candidate that can be moved to the front safely.
-                if self.sched_mode == ScheduleMode.FIFO_SAFE_SWAP:
-                    req_k = self._req_k(request)
-
-                    # Only meaningful once a batch K is already established.
-                    # If current_batch_k == 0, just preserve FIFO and let the
-                    # head request establish the batch K naturally.
-                    if current_batch_k > 0 and req_k > current_batch_k:
-                        # Snapshot a small prefix of the waiting queue.
-                        reqs: list[Request] = []
-                        while self.waiting and len(reqs) < self.fifo_safe_swap_window:
-                            reqs.append(self.waiting.pop_request())
-
-                        # If we popped fewer than 2 requests, no swap is possible.
-                        if len(reqs) >= 2:
-                            head = reqs[0]
-                            head_k = self._req_k(head)
-                            orig_dispatch_k = max(current_batch_k, head_k)
-
-                            selected_idx = None
-                            selected_k = None
-
-                            for idx in range(1, len(reqs)):
-                                cand = reqs[idx]
-                                cand_k = self._req_k(cand)
-                                new_dispatch_k = max(current_batch_k, cand_k)
-
-                                # Swap must strictly reduce current dispatch K.
-                                if new_dispatch_k >= orig_dispatch_k:
-                                    continue
-
-                                # Requests [0 .. idx-1] are each delayed by one position.
-                                extra_delay_s = self._estimate_one_position_delay_s(
-                                    cand, current_batch_k
-                                )
-
-                                safe = True
-                                for j in range(idx):
-                                    delayed_req = reqs[j]
-                                    delayed_req_k = self._req_k(delayed_req)
-                                    delayed_serving_k = max(current_batch_k, delayed_req_k)
-
-                                    if not self._ttft_safe_after_extra_delay(
-                                        delayed_req,
-                                        delayed_serving_k,
-                                        now,
-                                        extra_delay_s,
-                                    ):
-                                        safe = False
-                                        break
-
-                                if not safe:
-                                    continue
-
-                                # Prefer smaller k, then earlier candidate.
-                                if selected_idx is None or cand_k < selected_k:
-                                    selected_idx = idx
-                                    selected_k = cand_k
-
-                            # If found, move candidate to the front.
-                            if selected_idx is not None:
-                                reqs = [reqs[selected_idx]] + reqs[:selected_idx] + reqs[selected_idx + 1:]
-
-                        # Restore the window to the waiting queue.
-                        # prepend_requests keeps the current order of reqs at the head.
-                        self.waiting.prepend_requests(reqs)
-
-                        # Refresh head after the possible swap.
-                        request = self.waiting.peek_request()
-                
+                # FIFO: pure FCFS, no admission gating.                
 
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
