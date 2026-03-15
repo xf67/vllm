@@ -27,7 +27,8 @@ NUM_PROMPTS=${NUM_PROMPTS:-1024}
 DATASET_NAME=${DATASET_NAME:-"random2"}
 TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered2.csv"}
 
-RESULT_DIR="${RESULT_DIR:-test/bench_results/${DATASET_NAME}_${MODE}}"
+RESULT_ROOT="${RESULT_ROOT:-test/bench_results}"
+RESULT_DIR="${RESULT_ROOT}/${MODE}"
 mkdir -p "$RESULT_DIR"
 
 if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
