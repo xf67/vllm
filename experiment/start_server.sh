@@ -25,6 +25,7 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
 # fifo          : 纯FCFS，forward时k=batch中max(k_qos)
 # edf           : Earliest-Deadline-First，按TTFT紧迫度排序
 # ttft_agnostic : 离线最大吞吐，按k_qos分组batch
+# fifo_safe_swap: fifo但是有个换序
 SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
 
 # -------------------- QoS / K 相关 -------------------------
@@ -50,6 +51,9 @@ EDF_LOOKAHEAD_STEPS="${EDF_LOOKAHEAD_STEPS:-5}"
 # k准入门控: 当request的k > 预测未来batch_k时，
 # 只在 slack < ttft_max * urgency 时才放行（0.3 = 已消耗70%时间预算才放行）
 EDF_K_GATE_URGENCY="${EDF_K_GATE_URGENCY:-0.3}"
+
+# ---- FIFO_SWAP ---
+FIFO_SAFE_SWAP_WINDOW="${FIFO_SAFE_SWAP_WINDOW:-8}"
 
 # -------------------- TTFT_AGNOSTIC 参数 -------------------
 # batch利用率阈值: 当已用token >= max_tokens * ratio时, 不再提升k等级
@@ -107,6 +111,8 @@ echo "    EDF_LOOKAHEAD_STEPS:      $EDF_LOOKAHEAD_STEPS"
 echo "    EDF_K_GATE_URGENCY:       $EDF_K_GATE_URGENCY"
 echo "  TTFT_AGNOSTIC params:"
 echo "    MIN_BATCH_RATIO:          $TTFT_AGNOSTIC_MIN_BATCH_RATIO"
+echo "  FIFO_SWAP params:"
+echo "    SWAP_WINDOW:              $FIFO_SAFE_SWAP_WINDOW"
 echo "  Dispatch Log:      ${DISPATCH_LOG:-<disabled>}"
 echo "------------------------------------------------------------"
 echo "  CUDAGraph Mode:    $CUDAGRAPH_MODE"
