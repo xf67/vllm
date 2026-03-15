@@ -30,7 +30,7 @@ plt.rcParams.update({
 RATE_SORT_KEY = lambda r: float("inf") if r == "inf" else float(r)
 
 
-_skip_inf = True
+_skip_inf = False
 
 
 def load_run(result_dir: str) -> dict[str, dict]:
@@ -55,7 +55,7 @@ def parse_args():
                         help="Alternating: DIR [LABEL] DIR [LABEL] ...")
     parser.add_argument("-o", "--output-dir", default=None,
                         help="Save plots to this directory instead of showing")
-    parser.add_argument("--skip-inf", action="store_true", default=True,
+    parser.add_argument("--skip-inf", action="store_true", default=False,
                         help="Skip rate=inf groups (default: True)")
     parser.add_argument("--no-skip-inf", action="store_false", dest="skip_inf",
                         help="Include rate=inf groups")

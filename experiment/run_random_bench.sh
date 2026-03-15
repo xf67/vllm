@@ -30,7 +30,7 @@ TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered.csv"}
 RESULT_DIR="test/bench_results/${DATASET_NAME}_${MODE}"
 mkdir -p "$RESULT_DIR"
 
-if [ "$MODE" = "ttft_agnostic" ]; then
+if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
 else
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-8 12 16}"
