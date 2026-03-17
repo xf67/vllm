@@ -28,6 +28,8 @@ DP_SIZE="${DP_SIZE:-2}"
 # ttft_agnostic : 离线最大吞吐，按k_qos分组batch
 # fifo_safe_swap: fifo但是有个换序
 SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
+VLLM_DP_K_AWARE_DISPATCH="${2:-${VLLM_DP_K_AWARE_DISPATCH:-0}}"
+VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
 
 # -------------------- QoS / K 相关 -------------------------
 # QOS_AWARE: model runner层面是否将k_qos传给forward (bool)
@@ -94,6 +96,8 @@ export DISPATCH_LOG
 export VLLM_LOGGING_LEVEL
 export FIFO_SAFE_SWAP_WINDOW
 export FIFO_SWAP_KUP_RATIO
+export VLLM_DP_K_AWARE_DISPATCH
+export VLLM_DP_ENGINE_LANES
 
 # ============================================================
 #  Print config summary
@@ -108,6 +112,8 @@ echo "  Sched Mode:        $SCHED_MODE"
 echo "  QOS_AWARE:         $QOS_AWARE"
 echo "  QOS_K_LIST:        $QOS_K_LIST"
 echo "  Perf Model:        $PERF_MODEL_PATH"
+echo "  DP K-AWARE:        $VLLM_DP_K_AWARE_DISPATCH"
+echo "  DP LANE CONFIG:    $VLLM_DP_ENGINE_LANES"
 echo "------------------------------------------------------------"
 echo "  EDF params:"
 echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"

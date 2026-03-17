@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import multiprocessing
+import os
 import queue
 import sys
 import uuid
@@ -1187,6 +1188,52 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         self.eng_start_index = (
             len(self.core_engines) * self.client_index
         ) // client_count
+        self._init_k_aware_dispatch()
+
+    def _init_k_aware_dispatch(self) -> None:
+        self.k_aware_dispatch = os.environ.get(
+            "VLLM_DP_K_AWARE_DISPATCH", "0"
+        ) == "1"
+        self.boundary = int(os.environ.get("VLLM_DP_K_THRESHOLD", "5"))
+
+        lane_spec = os.environ.get("VLLM_DP_ENGINE_LANES", "").strip()
+        if lane_spec:
+            lanes = [int(x.strip()) for x in lane_spec.split(",") if x.strip()]
+            if len(lanes) < len(self.core_engines):
+                lanes.extend([lanes[-1]] * (len(self.core_engines) - len(lanes)))
+            self.engine_lanes = lanes[:len(self.core_engines)]
+        else:
+            self.engine_lanes = [0] * len(self.core_engines)//2 + [1] * (len(self.core_engines) - len(self.core_engines)//2)
+        if self.k_aware_dispatch:
+            print(f"[DPLBAsyncMPClient] Using lanes setting {self.engine_lanes}")
+
+    @staticmethod
+    def _get_request_k_qos(request: EngineCoreRequest) -> int:
+        sampling_params = request.sampling_params
+        extra_args = sampling_params.extra_args if sampling_params else None
+        k_qos = extra_args.get("k_qos", 0) if extra_args else 0
+        return int(k_qos or 0)
+
+    def update_boundary(self) -> None:
+        pass
+
+    def _get_preferred_lane(self, request: EngineCoreRequest) -> int | None:
+        if not self.k_aware_dispatch or self.boundary <= 0:
+            return 0
+
+        req_k = self._get_request_k_qos(request)
+
+        return 0 if req_k <= self.boundary else 1
+
+    def score_func(self, waiting, running, preferred):
+        if preferred == -1:
+            score = waiting * 4 + running
+        elif preferred == 0:
+            score = 1
+        elif preferred == 1:
+            score = 0
+        return score
+
 
     def get_core_engine_for_request(self, request: EngineCoreRequest) -> EngineIdentity:
         # Engines are in rank order.
@@ -1201,7 +1248,12 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                 # are empty.
                 idx = (self.eng_start_index + i) % num_engines
                 waiting, running = current_counts[idx]
-                score = waiting * 4 + running
+                if self.k_aware_dispatch:
+                    preferred_lane = self._get_preferred_lane(request)
+                    preferred = int (preferred_lane == self.engine_lanes[i]) # 1 for yes, 0 for no
+                else:
+                    preferred = -1
+                score = self.score_func(waiting, running, preferred)
                 if score < min_score:
                     min_score = score
                     eng_index = idx
