@@ -25,7 +25,7 @@ INPUT_LEN=${2:-2048}
 OUTPUT_LEN=${OUTPUT_LEN:-64}
 NUM_PROMPTS=${NUM_PROMPTS:-1024}
 DATASET_NAME=${DATASET_NAME:-"random2"}
-TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/AzureLLMInferenceTrace_filtered2.csv"}
+TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/vllm/experiment/AzureLLMInferenceTrace_filtered2.csv"}
 
 RESULT_ROOT="${RESULT_ROOT:-test/bench_results}"
 RESULT_DIR="${RESULT_ROOT}/${MODE}"
