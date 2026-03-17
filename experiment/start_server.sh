@@ -130,5 +130,6 @@ echo ""
 # ============================================================
 exec vllm serve "$MODEL" \
     --port "$PORT" \
+    --no-enable-prefix-caching \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}"
