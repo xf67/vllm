@@ -250,6 +250,12 @@ class Scheduler(SchedulerInterface):
         self._dispatch_step = 0
         self._dispatch_t0 = 0.0
         if self._dispatch_log_path:
+            print(f"[DDDBUG] {self.parallel_config.data_parallel_size} {self.parallel_config.data_parallel_rank}")
+            if self.parallel_config.data_parallel_size > 1:
+                base, _ = os.path.splitext(self._dispatch_log_path)
+                self._dispatch_log_path = (
+                    f"{base}_dp{self.parallel_config.data_parallel_rank}.csv"
+                )
             self._dispatch_log_file = open(self._dispatch_log_path, "w",
                                            newline="")
             self._dispatch_log_writer = csv.writer(self._dispatch_log_file)

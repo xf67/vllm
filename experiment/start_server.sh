@@ -20,6 +20,7 @@ set -euo pipefail
 MODEL="${MODEL:-/home/xxf/models/olmoe-7B-A1B}"
 PORT="${PORT:-8000}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
+DP_SIZE="${DP_SIZE:-2}"
 
 # -------------------- Scheduling Mode ----------------------
 # fifo          : 纯FCFS，forward时k=batch中max(k_qos)
@@ -132,4 +133,5 @@ exec vllm serve "$MODEL" \
     --port "$PORT" \
     --no-enable-prefix-caching \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
-    --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}"
+    --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}" \
+    --data-parallel-size "$DP_SIZE"
