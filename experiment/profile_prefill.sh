@@ -15,11 +15,11 @@ set -euo pipefail
 MODEL=${1:-"/home/xxf/models/olmoe-7B-A1B"}
 OUTPUT=${2:-"/home/xxf/NewVLLM/test/olmoe_perf_model.json"}
 ENDPOINT="/v1/completions"
-NUM_PROMPTS=32
+NUM_PROMPTS=256
 SEED=42
 PORT=${PORT:-8000}
 
-SEQ_LENS=(128 256 512 1024 2048)
+SEQ_LENS=(128 256 512 1024 1536 2048)
 K_VALUES=(1 2 3 4 5 6 7 8)
 
 RESULT_DIR="$(dirname "$OUTPUT")/profile_results"
