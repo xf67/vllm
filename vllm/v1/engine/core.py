@@ -1118,6 +1118,7 @@ class DPEngineCoreProc(EngineCoreProc):
         self.step_counter = 0
         self.current_wave = 0
         self.last_counts = (0, 0)
+        self.last_avg_topk = (0.0, 0.0)
 
         # Initialize the engine.
         dp_rank = vllm_config.parallel_config.data_parallel_rank
@@ -1192,12 +1193,18 @@ class DPEngineCoreProc(EngineCoreProc):
         if not self.publish_dp_lb_stats:
             return
 
-        # Publish our request counts (if they've changed).
+        # Publish our DP load stats if they've changed.
         counts = self.scheduler.get_request_counts()
-        if counts != self.last_counts:
+        avg_topk = self.scheduler.get_request_avg_topk()
+        if counts != self.last_counts or avg_topk != self.last_avg_topk:
             self.last_counts = counts
+            self.last_avg_topk = avg_topk
             stats = SchedulerStats(
-                *counts, step_counter=self.step_counter, current_wave=self.current_wave
+                *counts,
+                running_avg_topk=avg_topk[0],
+                waiting_avg_topk=avg_topk[1],
+                step_counter=self.step_counter,
+                current_wave=self.current_wave,
             )
             self.output_queue.put_nowait((-1, EngineCoreOutputs(scheduler_stats=stats)))
 

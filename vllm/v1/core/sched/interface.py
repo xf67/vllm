@@ -165,6 +165,11 @@ class SchedulerInterface(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_request_avg_topk(self) -> tuple[float, float]:
+        """Returns (running_avg_topk, waiting_avg_topk)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def make_stats(self) -> Optional["SchedulerStats"]:
         """Make a SchedulerStats object for logging.
 

@@ -25,8 +25,8 @@ class DPCoordinator:
     Intermediates between multiple DP engine rank processes and one or more
     front-end API server processes.
 
-    * Collects stats from each DP engine (currently just waiting and running
-      queue lengths), and publishes these to all front-ends for use in
+    * Collects stats from each DP engine (waiting/running queue lengths plus
+      their average top-k), and publishes these to all front-ends for use in
       load-balancing decisions.
 
     * Keeps track of the current DP "request wave" number and running state
@@ -107,6 +107,7 @@ class DPCoordinator:
 class EngineState:
     def __init__(self):
         self.request_counts = [0, 0]  # [waiting, running]
+        self.request_k_avg = [0.0, 0.0]  # [waiting, running]
 
 
 class DPCoordinatorProc:
@@ -155,7 +156,7 @@ class DPCoordinatorProc:
         stats_changed = False
         last_stats_step = -1
         last_stats_wave = -1
-        last_step_counts: list[list[int]] | None = None
+        last_step_stats: list[tuple[list[int], list[float]]] | None = None
 
         with (
             make_zmq_socket(
@@ -202,19 +203,19 @@ class DPCoordinatorProc:
 
                 # Wait at least 50ms to ensure we've received all stats for
                 # the current step.
-                min_timeout = 50 if last_step_counts is None else 0
+                min_timeout = 50 if last_step_stats is None else 0
 
                 events = poller.poll(timeout=max(min_timeout, wait_for - elapsed))
                 if not events:
                     # Poller timeout - publish current stats to front-ends.
-                    if last_step_counts is not None:
-                        engine_req_counts_list = last_step_counts
-                        last_step_counts = None
+                    if last_step_stats is not None:
+                        engine_req_stats_list = last_step_stats
+                        last_step_stats = None
                     else:
-                        engine_req_counts_list = self._get_engine_counts()
+                        engine_req_stats_list = self._get_engine_stats()
                         stats_changed = False
 
-                    to_publish = (engine_req_counts_list, current_wave, engines_running)
+                    to_publish = (engine_req_stats_list, current_wave, engines_running)
                     publish_front.send(msgspec.msgpack.encode(to_publish))
                     last_publish_time = int(time.time() * 1000)
                     continue
@@ -305,7 +306,7 @@ class DPCoordinatorProc:
                             and stats_step > last_stats_step
                         ):
                             if stats_changed:
-                                last_step_counts = self._get_engine_counts(do_copy=True)
+                                last_step_stats = self._get_engine_stats(do_copy=True)
                             last_stats_step = stats_step
                             last_stats_wave = stats_wave
                         elif stats_wave != last_stats_wave or (
@@ -323,6 +324,9 @@ class DPCoordinatorProc:
                             )
                         stats[0] = scheduler_stats.num_waiting_reqs
                         stats[1] = scheduler_stats.num_running_reqs
+                        k_stats = self.engines[eng_index].request_k_avg
+                        k_stats[0] = scheduler_stats.waiting_avg_topk
+                        k_stats[1] = scheduler_stats.running_avg_topk
                         stats_changed = True
 
                     if (wave := outputs.wave_complete) is not None:
@@ -370,8 +374,16 @@ class DPCoordinatorProc:
         wave_encoded = msgspec.msgpack.encode((wave, exclude_engine_index))
         socket.send_multipart((EngineCoreRequestType.START_DP_WAVE.value, wave_encoded))
 
-    def _get_engine_counts(self, do_copy=False) -> list[list[int]]:
-        """Return list of [waiting, running] count lists for each engine."""
+    def _get_engine_stats(
+        self, do_copy: bool = False
+    ) -> list[tuple[list[int], list[float]]]:
+        """Return [(counts, avg_topk)] for each engine.
+
+        Counts and average top-k values both use [waiting, running] ordering.
+        """
         if do_copy:
-            return [copy.copy(e.request_counts) for e in self.engines]
-        return [e.request_counts for e in self.engines]
+            return [
+                (copy.copy(e.request_counts), copy.copy(e.request_k_avg))
+                for e in self.engines
+            ]
+        return [(e.request_counts, e.request_k_avg) for e in self.engines]

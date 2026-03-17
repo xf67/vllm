@@ -156,6 +156,8 @@ class SchedulerStats:
 
     num_running_reqs: int = 0
     num_waiting_reqs: int = 0
+    running_avg_topk: float = 0.0
+    waiting_avg_topk: float = 0.0
 
     # These are used for internal DP load-balancing.
     step_counter: int = 0

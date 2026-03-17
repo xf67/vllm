@@ -346,7 +346,8 @@ class Scheduler(SchedulerInterface):
 
     @staticmethod
     def _req_k(request: Request) -> int:
-        extra = request.sampling_params.extra_args
+        sampling_params = request.sampling_params
+        extra = sampling_params.extra_args if sampling_params else None
         return (extra.get('k_qos', 0) if extra else 0) or 0
 
     @staticmethod
@@ -1685,6 +1686,19 @@ class Scheduler(SchedulerInterface):
         """Returns (num_running_reqs, num_waiting_reqs)."""
         return len(self.running), len(self.waiting)
 
+    @staticmethod
+    def _mean_req_k(requests: Iterable[Request]) -> float:
+        total_k = 0
+        count = 0
+        for request in requests:
+            total_k += Scheduler._req_k(request)
+            count += 1
+        return total_k / count if count else 0.0
+
+    def get_request_avg_topk(self) -> tuple[float, float]:
+        """Returns (running_avg_topk, waiting_avg_topk)."""
+        return self._mean_req_k(self.running), self._mean_req_k(self.waiting)
+
     def add_request(self, request: Request) -> None:
         self.waiting.add_request(request)
         self.requests[request.request_id] = request
@@ -1777,6 +1791,8 @@ class Scheduler(SchedulerInterface):
         return SchedulerStats(
             num_running_reqs=len(self.running),
             num_waiting_reqs=len(self.waiting),
+            running_avg_topk=self._mean_req_k(self.running),
+            waiting_avg_topk=self._mean_req_k(self.waiting),
             kv_cache_usage=self.kv_cache_manager.usage,
             prefix_cache_stats=prefix_cache_stats,
             connector_prefix_cache_stats=connector_prefix_cache_stats,

@@ -1024,9 +1024,12 @@ class DPAsyncMPClient(AsyncMPClient):
             client_index,
         )
 
-        # List of [waiting, running] pair per engine.
+        # Per-engine [waiting, running] counts and average top-k values.
         # Used only by DPLBAsyncMPClient subclass.
         self.lb_engines: list[list[int]] = [[0, 0] for _ in self.core_engines]
+        self.lb_engine_k_avg: list[list[float]] = [
+            [0.0, 0.0] for _ in self.core_engines
+        ]
 
         self.first_req_sock_addr = get_open_zmq_inproc_path()
         self.first_req_send_socket = self.resources.first_req_send_socket = (
@@ -1121,14 +1124,22 @@ class DPAsyncMPClient(AsyncMPClient):
                         continue
 
                     # Update local load-balancing state.
-                    counts, wave, running = msgspec.msgpack.decode(buf)
+                    engine_stats, wave, running = msgspec.msgpack.decode(buf)
                     self.current_wave = wave
                     self.engines_running = running
-                    if counts is not None:
-                        sliced_counts = counts[count_slice]
-                        self.lb_engines = sliced_counts
+                    if engine_stats is not None:
+                        sliced_stats = engine_stats[count_slice]
+                        self.lb_engines = [
+                            counts.copy() for counts, _ in sliced_stats
+                        ]
+                        self.lb_engine_k_avg = [
+                            k_avg.copy() for _, k_avg in sliced_stats
+                        ]
                         logger.debug(
-                            "Received counts: %s (%s)", sliced_counts, count_slice
+                            "Received engine stats: counts=%s k_avg=%s (%s)",
+                            self.lb_engines,
+                            self.lb_engine_k_avg,
+                            count_slice,
                         )
 
         resources.stats_update_task = asyncio.create_task(
@@ -1215,6 +1226,7 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         return int(k_qos or 0)
 
     def update_boundary(self) -> None:
+        # TODO
         pass
 
     def _get_preferred_lane(self, request: EngineCoreRequest) -> int | None:
@@ -1225,13 +1237,11 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
 
         return 0 if req_k <= self.boundary else 1
 
-    def score_func(self, waiting, running, preferred):
-        if preferred == -1:
+    def score_func(self, waiting, running, waiting_topk_avg, running_topk_avg):
+        if not self.k_aware_dispatch:
             score = waiting * 4 + running
-        elif preferred == 0:
-            score = 1
-        elif preferred == 1:
-            score = 0
+        else:
+            score = waiting * 4 + running # TODO
         return score
 
 
@@ -1239,6 +1249,7 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         # Engines are in rank order.
         if (eng_index := request.data_parallel_rank) is None:
             current_counts = self.lb_engines
+            current_topk_avg = self.lb_engine_k_avg
             # TODO use P2C alg for larger DP sizes
             num_engines = len(current_counts)
             min_score = sys.maxsize
@@ -1248,12 +1259,8 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                 # are empty.
                 idx = (self.eng_start_index + i) % num_engines
                 waiting, running = current_counts[idx]
-                if self.k_aware_dispatch:
-                    preferred_lane = self._get_preferred_lane(request)
-                    preferred = int (preferred_lane == self.engine_lanes[i]) # 1 for yes, 0 for no
-                else:
-                    preferred = -1
-                score = self.score_func(waiting, running, preferred)
+                waiting_topk_avg, running_topk_avg = current_topk_avg[idx]
+                score = self.score_func(waiting, running, waiting_topk_avg, running_topk_avg)
                 if score < min_score:
                     min_score = score
                     eng_index = idx
