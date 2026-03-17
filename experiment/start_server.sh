@@ -54,6 +54,7 @@ EDF_K_GATE_URGENCY="${EDF_K_GATE_URGENCY:-0.3}"
 
 # ---- FIFO_SWAP ---
 FIFO_SAFE_SWAP_WINDOW="${FIFO_SAFE_SWAP_WINDOW:-8}"
+FIFO_SWAP_KUP_RATIO="${FIFO_SWAP_KUP_RATIO:-0.9}"
 
 # -------------------- TTFT_AGNOSTIC 参数 -------------------
 # batch利用率阈值: 当已用token >= max_tokens * ratio时, 不再提升k等级
@@ -91,6 +92,7 @@ export TTFT_AGNOSTIC_MIN_BATCH_RATIO
 export DISPATCH_LOG
 export VLLM_LOGGING_LEVEL
 export FIFO_SAFE_SWAP_WINDOW
+export FIFO_SWAP_KUP_RATIO
 
 # ============================================================
 #  Print config summary
@@ -114,6 +116,7 @@ echo "  TTFT_AGNOSTIC params:"
 echo "    MIN_BATCH_RATIO:          $TTFT_AGNOSTIC_MIN_BATCH_RATIO"
 echo "  FIFO_SWAP params:"
 echo "    SWAP_WINDOW:              $FIFO_SAFE_SWAP_WINDOW"
+echo "    FIFO_SWAP_KUP_RATIO:      $FIFO_SWAP_KUP_RATIO"
 echo "  Dispatch Log:      ${DISPATCH_LOG:-<disabled>}"
 echo "------------------------------------------------------------"
 echo "  CUDAGraph Mode:    $CUDAGRAPH_MODE"

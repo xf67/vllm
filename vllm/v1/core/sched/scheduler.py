@@ -239,6 +239,9 @@ class Scheduler(SchedulerInterface):
         self.fifo_safe_swap_window = int(
             os.environ.get("FIFO_SAFE_SWAP_WINDOW", 8)
         )
+        self.fifo_swap_kup_ratio = float(
+            os.environ.get("FIFO_SWAP_KUP_RATIO", 0.9)
+        )
 
         # --- Dispatch metrics logging ---
         self._dispatch_log_path = os.environ.get("DISPATCH_LOG", "")
@@ -726,7 +729,6 @@ class Scheduler(SchedulerInterface):
         # are already part of the batch.
         ttft_agnostic_batch_k = current_serving_k
         # For FIFO_SWAP
-        current_batch_k = current_serving_k
         # print(f"[DDDBUG] current_batch_k {current_batch_k}")
 
         # FIFO_SWAP:
@@ -738,15 +740,20 @@ class Scheduler(SchedulerInterface):
                 reqs.append(self.waiting.pop_request())
 
             if len(reqs) >= 2:
-                orig_ks = [self._req_k(req) for req in reqs]
+                def sort_key(req: Request) -> tuple[int, int, float]:
+                    req_k = self._req_k(req)
 
-                # Sort by k ascending. Python sort is stable, so FIFO is preserved
-                # among requests with the same k.
-                reqs.sort(key=self._req_k)
+                    # Group 0: requests that do not raise current serving k
+                    #   Prefer larger k first, so the system can step down gradually.
+                    if req_k <= current_serving_k:
+                        return (0, -req_k, req.arrival_time)
 
-                # print(
-                #     f"[DDDBUG] k-sort {orig_ks} -> {[self._req_k(req) for req in reqs]}"
-                # )
+                    # Group 1: requests that would raise current serving k
+                    #   Prefer the smallest increase first.
+                    return (1, req_k, req.arrival_time)
+
+                reqs.sort(key=sort_key)
+                # print(f"[DDDBUG] sorted {[self._req_k(req) for req in reqs]}")
 
             self.waiting.prepend_requests(reqs)
 
@@ -799,6 +806,33 @@ class Scheduler(SchedulerInterface):
                             self.waiting.pop_request()
                             skipped_waiting_requests.prepend_request(request)
                             continue
+                # FIFO_SAFE_SWAP, check if k come big
+                if self.sched_mode == ScheduleMode.FIFO_SAFE_SWAP:
+                    req_ttft = self._req_ttft(request)
+                    if req_ttft > 0:
+                        slack = self._edf_slack(
+                            request, edf_target_k, now)
+                        urgent = (
+                            slack < req_ttft * self.edf_k_gate_urgency
+                        )
+                    else:
+                        urgent = False
+                    if current_serving_k <= 0:
+                        pass
+                    elif self._req_k(request) <= current_serving_k:
+                        pass
+                    elif token_budget <= self.max_num_scheduled_tokens*self.fifo_swap_kup_ratio:
+                        # print(f"[DDBUG] pass request with k {self._req_k(request)} for loose token_budget {token_budget}")
+                        pass
+                    elif urgent:
+                        # print(f"[DDBUG] pass urgent request with k {self._req_k(request)} for slack {slack} req_ttft {req_ttft}")
+                        pass
+                    else:
+                        # print(f"[DDBUG] stop request with k {self._req_k(request)}")
+                        self.waiting.pop_request()
+                        skipped_waiting_requests.prepend_request(request)
+                        continue
+
                 # FIFO: pure FCFS, no admission gating.                
 
                 # KVTransfer: skip request if still waiting for remote kvs.
