@@ -1258,13 +1258,20 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
             )
         )
         self.boundary = max(self.k_min, min(self.init_boundary, self.k_max))
-        self.boundary_hysteresis = int(os.environ.get("VLLM_DP_K_HYSTERESIS",10))
+        self.boundary_hysteresis = int(
+            os.environ.get("VLLM_DP_K_HYSTERESIS", 10)
+        )
+        self.boundary_cooldown = max(
+            0, int(os.environ.get("VLLM_DP_K_COOLDOWN", 0))
+        )
+        self.boundary_cooldown_remaining = 0
 
         if self.k_aware_dispatch:
             logger.info(
                 f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
                 f"k_range=[{self.k_min}, {self.k_max}], "
-                f"init_boundary={self.boundary}"
+                f"init_boundary={self.boundary}, "
+                f"cooldown={self.boundary_cooldown}"
             )
 
     @staticmethod
@@ -1277,6 +1284,15 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
     @log_enter_exit(logger)
     def update_boundary(self) -> None:
         if not self.k_aware_dispatch:
+            return
+
+        if self.boundary_cooldown_remaining > 0:
+            self.boundary_cooldown_remaining -= 1
+            logger.debug(
+                "[DPLBAsyncMPClient] boundary cooldown active: "
+                f"boundary={self.boundary}, "
+                f"remaining={self.boundary_cooldown_remaining}"
+            )
             return
 
         # TODO: 没考虑超过2个lane的时候
@@ -1293,24 +1309,33 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
 
         old_boundary = self.boundary
 
-        if pressure0 + self.boundary_hysteresis/(abs(self.boundary-self.init_boundary)+1) < pressure1:
+        boundary_offset = abs(self.boundary - self.init_boundary) + 1
+        hysteresis = self.boundary_hysteresis / boundary_offset
+
+        if pressure0 + hysteresis < pressure1:
             # lane 1 busier -> shift more future requests to lane 0
             self.boundary += 1
-        elif pressure1 + self.boundary_hysteresis/(abs(self.boundary-self.init_boundary)+1)  < pressure0:
+        elif pressure1 + hysteresis < pressure0:
             # lane 0 busier -> shift more future requests to lane 1
             self.boundary -= 1
 
         self.boundary = max(self.k_min, min(self.boundary, self.k_max))
 
         if self.boundary != old_boundary:
+            self.boundary_cooldown_remaining = self.boundary_cooldown
             logger.debug(
                 "[DPLBAsyncMPClient] boundary updated: "
                 f"{old_boundary} -> {self.boundary} "
-                f"(lane0: waiting={lane_waiting[0]}, running={lane_running[0]}, pressure={pressure0}; "
+                f"(cooldown={self.boundary_cooldown_remaining}; "
+                f"lane0: waiting={lane_waiting[0]}, running={lane_running[0]}, pressure={pressure0}; "
                 f"lane1: waiting={lane_waiting[1]}, running={lane_running[1]}, pressure={pressure1})"
             )
         else:
-            logger.debug(f"[DPLBAsyncMPClient] boundary = {self.boundary}")
+            logger.debug(
+                "[DPLBAsyncMPClient] boundary = "
+                f"{self.boundary} "
+                f"(cooldown={self.boundary_cooldown_remaining})"
+            )
 
     @log_enter_exit(logger)
     def _get_preferred_lane(self, request: EngineCoreRequest) -> int | None:

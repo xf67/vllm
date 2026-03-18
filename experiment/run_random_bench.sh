@@ -34,7 +34,7 @@ mkdir -p "$RESULT_DIR"
 if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
 else
-  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-40}"
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-30}"
 fi
 
 # TTFT_MAX_STATIC   >0 → fixed value (seconds) for all requests
@@ -47,22 +47,24 @@ fi
 unset TTFT_MAX_STATIC
 
 export PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/olmoe_perf_model.json}"
-export TTFT_MULTIPLIER="${TTFT_MULTIPLIER:-2}"
+export TTFT_MULTIPLIER="${TTFT_MULTIPLIER:-3}"
 export TTFT_QUEUE_MS="${TTFT_QUEUE_MS:-10}"
 export TTFT_JITTER_LOW="${TTFT_JITTER_LOW:-1}"
 export TTFT_JITTER_HIGH="${TTFT_JITTER_HIGH:-1.5}"
 
 # default: normal 4 1 8
-export KQOS_DIST="${KQOS_DIST:-normal}"
-export QOS_K_MEAN="${QOS_K_MEAN:-4}"
-export QOS_K_STD="${QOS_K_STD:-1}"
-export QOS_K_MAX="${QOS_K_MAX:-8}"
+# export KQOS_DIST="${KQOS_DIST:-normal}"
+# export QOS_K_MEAN="${QOS_K_MEAN:-4}"
+# export QOS_K_STD="${QOS_K_STD:-1.5}"
+# export QOS_K_MAX="${QOS_K_MAX:-8}"
 
 # 在uniform的时候，mean和std分别表示min和max
-# export KQOS_DIST="uniform"
-# export QOS_K_MEAN=1
-# export QOS_K_STD=8
-# export QOS_K_MAX=8
+export KQOS_DIST="uniform"
+export QOS_K_MEAN=1
+export QOS_K_STD=8
+export QOS_K_MAX=8
+
+# export KQOS_LOCAL_DIST=1,1,1,1,8,8
 
 echo "================================================================"
 echo "Benchmark — dataset: $DATASET_NAME  mode: $MODE"

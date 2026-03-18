@@ -34,7 +34,8 @@ VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
 # 初始的topk boundary，这里暂时是传一个int，假设我们只有两个lane
 VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
 # boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
-VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-30}"
+VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-1}"
+VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-16}"
 
 # -------------------- QoS / K 相关 -------------------------
 # QOS_AWARE: model runner层面是否将k_qos传给forward (bool)
@@ -103,6 +104,7 @@ export VLLM_DP_K_AWARE_DISPATCH
 export VLLM_DP_ENGINE_LANES
 export VLLM_DP_K_THRESHOLD
 export VLLM_DP_K_HYSTERESIS
+export VLLM_DP_K_COOLDOWN
 
 # ============================================================
 #  Print config summary
