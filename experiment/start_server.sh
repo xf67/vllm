@@ -31,10 +31,18 @@ SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
 VLLM_DP_K_AWARE_DISPATCH="${2:-${VLLM_DP_K_AWARE_DISPATCH:-0}}"
 # [a,b,c,d...]表示dp_rank0,1,2,3...分别属于a,b,c,d...lane
 VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
-# 初始的topk boundary，这里暂时是传一个int，假设我们只有两个lane
+# 固定K边界模式开关；开启后:
+#   k < lower 只走 lane0
+#   k > upper 只走 lane1
+#   中间区间按 4*waiting+running 做负载均衡
+VLLM_DP_FIXED_K_BOUNDARY_DISPATCH="${VLLM_DP_FIXED_K_BOUNDARY_DISPATCH:-0}"
+# 固定K边界，格式为 lower,upper
+VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-4,5}"
+# 动态boundary模式的初始topk boundary
 VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
 # boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
 VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-1}"
+# cooldown是指变化boundary后几个step之内不能再变
 VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-16}"
 
 # -------------------- QoS / K 相关 -------------------------
@@ -102,6 +110,8 @@ export FIFO_SAFE_SWAP_WINDOW
 export FIFO_SWAP_KUP_RATIO
 export VLLM_DP_K_AWARE_DISPATCH
 export VLLM_DP_ENGINE_LANES
+export VLLM_DP_FIXED_K_BOUNDARY_DISPATCH
+export VLLM_DP_K_BOUNDARIES
 export VLLM_DP_K_THRESHOLD
 export VLLM_DP_K_HYSTERESIS
 export VLLM_DP_K_COOLDOWN
@@ -121,6 +131,9 @@ echo "  QOS_K_LIST:        $QOS_K_LIST"
 echo "  Perf Model:        $PERF_MODEL_PATH"
 echo "  DP K-AWARE:        $VLLM_DP_K_AWARE_DISPATCH"
 echo "  DP LANE CONFIG:    $VLLM_DP_ENGINE_LANES"
+echo "  DP FIXED K MODE:   $VLLM_DP_FIXED_K_BOUNDARY_DISPATCH"
+echo "  DP K BOUNDARIES:   $VLLM_DP_K_BOUNDARIES"
+echo "  DP K THRESHOLD:    $VLLM_DP_K_THRESHOLD"
 echo "------------------------------------------------------------"
 echo "  EDF params:"
 echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"

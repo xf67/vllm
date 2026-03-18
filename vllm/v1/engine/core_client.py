@@ -1219,6 +1219,11 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
     @log_enter_exit(logger)
     def _init_k_aware_dispatch(self) -> None:
         self.k_aware_dispatch = os.environ.get("VLLM_DP_K_AWARE_DISPATCH", "0") == "1"
+        self.fixed_k_boundary_dispatch = (
+            os.environ.get("VLLM_DP_FIXED_K_BOUNDARY_DISPATCH", "0") == "1"
+        )
+        if self.fixed_k_boundary_dispatch:
+            self.k_aware_dispatch = True
 
         lane_spec = os.environ.get("VLLM_DP_ENGINE_LANES", "").strip()
         if lane_spec:
@@ -1250,13 +1255,35 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         self.k_min = min(qos_k_cases)
         self.k_max = max(qos_k_cases)
 
-        # Only read initial boundary from env once during init.
-        self.init_boundary = int(
+        default_boundary = int(
             os.environ.get(
                 "VLLM_DP_K_THRESHOLD",
                 str((self.k_min + self.k_max) // 2),
             )
         )
+        boundary_spec = os.environ.get("VLLM_DP_K_BOUNDARIES", "").strip()
+        if boundary_spec:
+            boundaries = [
+                int(x.strip()) for x in boundary_spec.split(",") if x.strip()
+            ]
+            if len(boundaries) != 2:
+                raise ValueError(
+                    "VLLM_DP_K_BOUNDARIES must contain exactly two integers"
+                )
+            lower_boundary, upper_boundary = sorted(boundaries)
+        else:
+            lower_boundary = default_boundary
+            upper_boundary = default_boundary
+
+        self.fixed_k_lower_boundary = max(
+            self.k_min, min(lower_boundary, self.k_max)
+        )
+        self.fixed_k_upper_boundary = max(
+            self.k_min, min(upper_boundary, self.k_max)
+        )
+
+        # Only read initial boundary from env once during init.
+        self.init_boundary = default_boundary
         self.boundary = max(self.k_min, min(self.init_boundary, self.k_max))
         self.boundary_hysteresis = int(
             os.environ.get("VLLM_DP_K_HYSTERESIS", 10)
@@ -1267,12 +1294,21 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         self.boundary_cooldown_remaining = 0
 
         if self.k_aware_dispatch:
-            logger.info(
-                f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
-                f"k_range=[{self.k_min}, {self.k_max}], "
-                f"init_boundary={self.boundary}, "
-                f"cooldown={self.boundary_cooldown}"
-            )
+            if self.fixed_k_boundary_dispatch:
+                logger.info(
+                    f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
+                    f"k_range=[{self.k_min}, {self.k_max}], "
+                    f"fixed_boundaries=("
+                    f"{self.fixed_k_lower_boundary}, "
+                    f"{self.fixed_k_upper_boundary})"
+                )
+            else:
+                logger.info(
+                    f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
+                    f"k_range=[{self.k_min}, {self.k_max}], "
+                    f"init_boundary={self.boundary}, "
+                    f"cooldown={self.boundary_cooldown}"
+                )
 
     @staticmethod
     def _get_request_k_qos(request: EngineCoreRequest) -> int:
@@ -1364,7 +1400,77 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         running_topk_avg: float,
     ) -> int:
         return waiting * 4 + running
-    
+
+    def _get_candidate_indices(
+        self, preferred_lane: int | None, engine_count: int
+    ) -> list[int]:
+        candidate_indices = []
+        for i in range(engine_count):
+            idx = (self.eng_start_index + i) % engine_count
+            if preferred_lane is None or self.engine_lanes[idx] == preferred_lane:
+                candidate_indices.append(idx)
+        return candidate_indices
+
+    def _select_engine_by_score(
+        self,
+        candidate_indices: list[int],
+        current_counts: list[list[int]],
+        current_topk_avg: list[list[float]],
+    ) -> int:
+        min_score = sys.maxsize
+        eng_index = candidate_indices[0]
+        logger.debug(f"[DDDBUG] candidate_indices {candidate_indices}")
+
+        for idx in candidate_indices:
+            waiting, running = current_counts[idx]
+            waiting_topk_avg, running_topk_avg = current_topk_avg[idx]
+            score = self.score_func(
+                waiting, running, waiting_topk_avg, running_topk_avg
+            )
+            if score < min_score:
+                min_score = score
+                eng_index = idx
+        return eng_index
+
+    @log_enter_exit(logger)
+    def _schedule_request_with_fixed_k_boundaries(
+        self,
+        request: EngineCoreRequest,
+        current_counts: list[list[int]],
+        current_topk_avg: list[list[float]],
+    ) -> int | None:
+        if not self.fixed_k_boundary_dispatch:
+            return None
+
+        req_k = self._get_request_k_qos(request)
+        preferred_lane = None
+
+        if req_k > 0:
+            if req_k < self.fixed_k_lower_boundary:
+                preferred_lane = 0
+            elif req_k > self.fixed_k_upper_boundary:
+                preferred_lane = 1
+
+        candidate_indices = self._get_candidate_indices(
+            preferred_lane, len(current_counts)
+        )
+        if not candidate_indices:
+            candidate_indices = self._get_candidate_indices(
+                None, len(current_counts)
+            )
+
+        eng_index = self._select_engine_by_score(
+            candidate_indices, current_counts, current_topk_avg
+        )
+        logger.debug(
+            "[DPLBAsyncMPClient] fixed boundary dispatch: "
+            f"req_k={req_k}, preferred_lane={preferred_lane}, "
+            f"boundaries=("
+            f"{self.fixed_k_lower_boundary}, {self.fixed_k_upper_boundary}), "
+            f"eng_index={eng_index}"
+        )
+        return eng_index
+
     @log_enter_exit(logger)
     def get_core_engine_for_request(self, request: EngineCoreRequest) -> EngineIdentity:
         # Engines are in rank order.
@@ -1372,36 +1478,31 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
             current_counts = self.lb_engines
             current_topk_avg = self.lb_engine_k_avg
 
-            self.update_boundary()
-            preferred_lane = self._get_preferred_lane(request)
+            eng_index = self._schedule_request_with_fixed_k_boundaries(
+                request,
+                current_counts,
+                current_topk_avg,
+            )
+            if eng_index is None:
+                self.update_boundary()
+                preferred_lane = self._get_preferred_lane(request)
+                candidate_indices = self._get_candidate_indices(
+                    preferred_lane,
+                    len(current_counts),
+                )
 
-            candidate_indices = []
-            if preferred_lane is not None:
-                for i in range(len(current_counts)):
-                    idx = (self.eng_start_index + i) % len(current_counts)
-                    if self.engine_lanes[idx] == preferred_lane:
-                        candidate_indices.append(idx)
+                # If req_k == boundary (preferred_lane is None), or no lane matched,
+                # use original LB over all engines.
+                # TODO: 没考虑超过2个lane的时候
+                if not candidate_indices:
+                    candidate_indices = self._get_candidate_indices(
+                        None,
+                        len(current_counts),
+                    )
 
-            # If req_k == boundary (preferred_lane is None), or no lane matched,
-            # use original LB over all engines.
-            # TODO: 没考虑超过2个lane的时候
-            if not candidate_indices:
-                candidate_indices = [
-                    (self.eng_start_index + i) % len(current_counts)
-                    for i in range(len(current_counts))
-                ]
-
-            min_score = sys.maxsize
-            eng_index = candidate_indices[0]
-            logger.debug(f"[DDDBUG] candidate_indices {candidate_indices}")
-
-            for idx in candidate_indices:
-                waiting, running = current_counts[idx]
-                waiting_topk_avg, running_topk_avg = current_topk_avg[idx]
-                score = self.score_func(waiting, running, waiting_topk_avg, running_topk_avg)
-                if score < min_score:
-                    min_score = score
-                    eng_index = idx
+                eng_index = self._select_engine_by_score(
+                    candidate_indices, current_counts, current_topk_avg
+                )
             # Increment local waiting count for better balancing between stats
             # updates from the coordinator (which happen every 100ms).
             current_counts[eng_index][0] += self.client_count
