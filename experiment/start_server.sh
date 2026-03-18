@@ -29,7 +29,12 @@ DP_SIZE="${DP_SIZE:-2}"
 # fifo_safe_swap: fifo但是有个换序
 SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
 VLLM_DP_K_AWARE_DISPATCH="${2:-${VLLM_DP_K_AWARE_DISPATCH:-0}}"
+# [a,b,c,d...]表示dp_rank0,1,2,3...分别属于a,b,c,d...lane
 VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
+# 初始的topk boundary，这里暂时是传一个int，假设我们只有两个lane
+VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
+# boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
+VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-30}"
 
 # -------------------- QoS / K 相关 -------------------------
 # QOS_AWARE: model runner层面是否将k_qos传给forward (bool)
@@ -77,8 +82,7 @@ DISPATCH_LOG="${DISPATCH_LOG:-/home/xxf/NewVLLM/vllm/test/log}"
 # export VLLM_TORCH_PROFILER_DIR=/home/xxf/NewVLLM/traces
 # export RUN_DEBUG_PORT=5678
 # export VLLM_DISABLE_COMPILE_CACHE=1
-
-VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-INFO}"
+# export VLLM_LOGGING_LEVEL="DEBUG"
 
 
 # ============================================================
@@ -93,11 +97,12 @@ export EDF_LOOKAHEAD_STEPS
 export EDF_K_GATE_URGENCY
 export TTFT_AGNOSTIC_MIN_BATCH_RATIO
 export DISPATCH_LOG
-export VLLM_LOGGING_LEVEL
 export FIFO_SAFE_SWAP_WINDOW
 export FIFO_SWAP_KUP_RATIO
 export VLLM_DP_K_AWARE_DISPATCH
 export VLLM_DP_ENGINE_LANES
+export VLLM_DP_K_THRESHOLD
+export VLLM_DP_K_HYSTERESIS
 
 # ============================================================
 #  Print config summary
@@ -128,7 +133,6 @@ echo "  Dispatch Log:      ${DISPATCH_LOG:-<disabled>}"
 echo "------------------------------------------------------------"
 echo "  CUDAGraph Mode:    $CUDAGRAPH_MODE"
 echo "  Share Attn TopK:   $SHARE_ATTN_ACROSS_TOPK"
-echo "  Logging:           $VLLM_LOGGING_LEVEL"
 echo "============================================================"
 echo ""
 

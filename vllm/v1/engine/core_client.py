@@ -59,6 +59,21 @@ _R = TypeVar("_R")  # Return type for collective_rpc
 EngineIdentity = bytes
 
 
+from functools import wraps
+
+def log_enter_exit(logger):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            func_name = func.__name__
+            logger.debug(f"[DDDBUG] enter {func_name} func")
+            try:
+                return func(*args, **kwargs)
+            finally:
+                logger.debug(f"[DDDBUG] exit {func_name} func")
+        return wrapper
+    return decorator
+
 class EngineCoreClient(ABC):
     """
     EngineCoreClient: subclasses handle different methods for pushing
@@ -1201,11 +1216,9 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         ) // client_count
         self._init_k_aware_dispatch()
 
+    @log_enter_exit(logger)
     def _init_k_aware_dispatch(self) -> None:
-        self.k_aware_dispatch = os.environ.get(
-            "VLLM_DP_K_AWARE_DISPATCH", "0"
-        ) == "1"
-        self.boundary = int(os.environ.get("VLLM_DP_K_THRESHOLD", "5"))
+        self.k_aware_dispatch = os.environ.get("VLLM_DP_K_AWARE_DISPATCH", "0") == "1"
 
         lane_spec = os.environ.get("VLLM_DP_ENGINE_LANES", "").strip()
         if lane_spec:
@@ -1214,9 +1227,45 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                 lanes.extend([lanes[-1]] * (len(self.core_engines) - len(lanes)))
             self.engine_lanes = lanes[:len(self.core_engines)]
         else:
-            self.engine_lanes = [0] * len(self.core_engines)//2 + [1] * (len(self.core_engines) - len(self.core_engines)//2)
+            half = len(self.core_engines) // 2
+            self.engine_lanes = [0] * half + [1] * (len(self.core_engines) - half)
+
+        qos_k_list_str = os.environ.get("QOS_K_LIST", "-1")
+        if qos_k_list_str.startswith("r"):
+            qos_k_list_start_end = [
+                int(x) for x in qos_k_list_str[1:].split(",")
+            ]
+            qos_k_cases = [
+                x for x in range(
+                    qos_k_list_start_end[0],
+                    qos_k_list_start_end[1] + 1,
+                )
+            ]
+        else:
+            qos_k_cases = [int(x) for x in qos_k_list_str.split(",")]
+
+        if not qos_k_cases:
+            qos_k_cases = [1]
+
+        self.k_min = min(qos_k_cases)
+        self.k_max = max(qos_k_cases)
+
+        # Only read initial boundary from env once during init.
+        self.init_boundary = int(
+            os.environ.get(
+                "VLLM_DP_K_THRESHOLD",
+                str((self.k_min + self.k_max) // 2),
+            )
+        )
+        self.boundary = max(self.k_min, min(self.init_boundary, self.k_max))
+        self.boundary_hysteresis = int(os.environ.get("VLLM_DP_K_HYSTERESIS",10))
+
         if self.k_aware_dispatch:
-            print(f"[DPLBAsyncMPClient] Using lanes setting {self.engine_lanes}")
+            logger.info(
+                f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
+                f"k_range=[{self.k_min}, {self.k_max}], "
+                f"init_boundary={self.boundary}"
+            )
 
     @staticmethod
     def _get_request_k_qos(request: EngineCoreRequest) -> int:
@@ -1225,39 +1274,103 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         k_qos = extra_args.get("k_qos", 0) if extra_args else 0
         return int(k_qos or 0)
 
+    @log_enter_exit(logger)
     def update_boundary(self) -> None:
-        # TODO
-        pass
+        if not self.k_aware_dispatch:
+            return
 
+        # TODO: 没考虑超过2个lane的时候
+        lane_waiting = {0: 0, 1: 0}
+        lane_running = {0: 0, 1: 0}
+
+        for i, (waiting, running) in enumerate(self.lb_engines):
+            lane = self.engine_lanes[i]
+            lane_waiting[lane] += waiting
+            lane_running[lane] += running
+
+        pressure0 = lane_waiting[0] * 4 + lane_running[0]
+        pressure1 = lane_waiting[1] * 4 + lane_running[1]
+
+        old_boundary = self.boundary
+
+        if pressure0 + self.boundary_hysteresis/(abs(self.boundary-self.init_boundary)+1) < pressure1:
+            # lane 1 busier -> shift more future requests to lane 0
+            self.boundary += 1
+        elif pressure1 + self.boundary_hysteresis/(abs(self.boundary-self.init_boundary)+1)  < pressure0:
+            # lane 0 busier -> shift more future requests to lane 1
+            self.boundary -= 1
+
+        self.boundary = max(self.k_min, min(self.boundary, self.k_max))
+
+        if self.boundary != old_boundary:
+            logger.debug(
+                "[DPLBAsyncMPClient] boundary updated: "
+                f"{old_boundary} -> {self.boundary} "
+                f"(lane0: waiting={lane_waiting[0]}, running={lane_running[0]}, pressure={pressure0}; "
+                f"lane1: waiting={lane_waiting[1]}, running={lane_running[1]}, pressure={pressure1})"
+            )
+        else:
+            logger.debug(f"[DPLBAsyncMPClient] boundary = {self.boundary}")
+
+    @log_enter_exit(logger)
     def _get_preferred_lane(self, request: EngineCoreRequest) -> int | None:
-        if not self.k_aware_dispatch or self.boundary <= 0:
-            return 0
+        if not self.k_aware_dispatch:
+            return None
 
         req_k = self._get_request_k_qos(request)
 
-        return 0 if req_k <= self.boundary else 1
+        if req_k <= 0:
+            return None
 
-    def score_func(self, waiting, running, waiting_topk_avg, running_topk_avg):
-        if not self.k_aware_dispatch:
-            score = waiting * 4 + running
-        else:
-            score = waiting * 4 + running # TODO
-        return score
+        if req_k < self.boundary:
+            return 0
+        if req_k > self.boundary:
+            return 1
 
+        # req_k == boundary:
+        # fall back to original load balancing across all engines
+        return None
 
+    @staticmethod
+    def score_func(
+        waiting: int,
+        running: int,
+        waiting_topk_avg: float,
+        running_topk_avg: float,
+    ) -> int:
+        return waiting * 4 + running
+    
+    @log_enter_exit(logger)
     def get_core_engine_for_request(self, request: EngineCoreRequest) -> EngineIdentity:
         # Engines are in rank order.
         if (eng_index := request.data_parallel_rank) is None:
             current_counts = self.lb_engines
             current_topk_avg = self.lb_engine_k_avg
-            # TODO use P2C alg for larger DP sizes
-            num_engines = len(current_counts)
+
+            self.update_boundary()
+            preferred_lane = self._get_preferred_lane(request)
+
+            candidate_indices = []
+            if preferred_lane is not None:
+                for i in range(len(current_counts)):
+                    idx = (self.eng_start_index + i) % len(current_counts)
+                    if self.engine_lanes[idx] == preferred_lane:
+                        candidate_indices.append(idx)
+
+            # If req_k == boundary (preferred_lane is None), or no lane matched,
+            # use original LB over all engines.
+            # TODO: 没考虑超过2个lane的时候
+            if not candidate_indices:
+                candidate_indices = [
+                    (self.eng_start_index + i) % len(current_counts)
+                    for i in range(len(current_counts))
+                ]
+
             min_score = sys.maxsize
-            eng_index = 0
-            for i in range(num_engines):
-                # Start from client_index to help with balancing when engines
-                # are empty.
-                idx = (self.eng_start_index + i) % num_engines
+            eng_index = candidate_indices[0]
+            logger.debug(f"[DDDBUG] candidate_indices {candidate_indices}")
+
+            for idx in candidate_indices:
                 waiting, running = current_counts[idx]
                 waiting_topk_avg, running_topk_avg = current_topk_avg[idx]
                 score = self.score_func(waiting, running, waiting_topk_avg, running_topk_avg)
