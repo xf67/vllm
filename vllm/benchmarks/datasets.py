@@ -181,6 +181,13 @@ class BenchmarkDataset(ABC):
         """
         if num_experts < 1:
             raise ValueError("num_experts should >= 1")
+        
+
+        local_dist = os.getenv("KQOS_LOCAL_DIST")
+        if local_dist is not None:
+            local_dist_k = [int(x.strip()) for x in local_dist.split(",")]
+            x = random.choice(local_dist_k)
+            return x
 
         dist = os.getenv("KQOS_DIST", "normal").strip().lower()
 
