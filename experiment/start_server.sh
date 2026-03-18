@@ -37,7 +37,7 @@ VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
 #   中间区间按 4*waiting+running 做负载均衡
 VLLM_DP_FIXED_K_BOUNDARY_DISPATCH="${VLLM_DP_FIXED_K_BOUNDARY_DISPATCH:-0}"
 # 固定K边界，格式为 lower,upper
-VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-4,5}"
+VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-2,7}"
 # 动态boundary模式的初始topk boundary
 VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
 # boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
