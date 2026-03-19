@@ -39,13 +39,15 @@ VLLM_DP_FIXED_K_BOUNDARY_DISPATCH="${VLLM_DP_FIXED_K_BOUNDARY_DISPATCH:-0}"
 # 固定K边界，格式为 lower,upper
 VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-2,7}"
 # boundary覆盖的k宽度；=1时与原先单点boundary行为一致
-VLLM_DP_K_BOUNDARY_WIDTH="${VLLM_DP_K_BOUNDARY_WIDTH:-1}"
+VLLM_DP_K_BOUNDARY_WIDTH="${VLLM_DP_K_BOUNDARY_WIDTH:-2}"
 # 动态boundary模式的初始topk boundary
 VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
 # boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
-VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-1}"
+VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-8}"
 # cooldown是指变化boundary后几个step之内不能再变
-VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-16}"
+VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-8}"
+# lane内没有waiting请求时，允许跨lane挑选waiting=0的rank
+MAYBE_OVERRIDE="${MAYBE_OVERRIDE:-0}"
 
 # -------------------- QoS / K 相关 -------------------------
 # QOS_AWARE: model runner层面是否将k_qos传给forward (bool)
@@ -118,6 +120,7 @@ export VLLM_DP_K_BOUNDARY_WIDTH
 export VLLM_DP_K_THRESHOLD
 export VLLM_DP_K_HYSTERESIS
 export VLLM_DP_K_COOLDOWN
+export MAYBE_OVERRIDE
 
 # ============================================================
 #  Print config summary
@@ -138,6 +141,7 @@ echo "  DP FIXED K MODE:   $VLLM_DP_FIXED_K_BOUNDARY_DISPATCH"
 echo "  DP K BOUNDARIES:   $VLLM_DP_K_BOUNDARIES"
 echo "  DP K BDR WIDTH:    $VLLM_DP_K_BOUNDARY_WIDTH"
 echo "  DP K THRESHOLD:    $VLLM_DP_K_THRESHOLD"
+echo "  MAYBE_OVERRIDE:    $MAYBE_OVERRIDE"
 echo "------------------------------------------------------------"
 echo "  EDF params:"
 echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"

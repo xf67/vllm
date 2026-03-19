@@ -1222,6 +1222,7 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         self.fixed_k_boundary_dispatch = (
             os.environ.get("VLLM_DP_FIXED_K_BOUNDARY_DISPATCH", "0") == "1"
         )
+        self.maybe_override = os.environ.get("MAYBE_OVERRIDE", "0") == "1"
         if self.fixed_k_boundary_dispatch:
             self.k_aware_dispatch = True
 
@@ -1344,6 +1345,7 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
             self._clamp_boundary(upper_boundary),
         )
 
+
     @log_enter_exit(logger)
     def update_boundary(self) -> None:
         if not self.k_aware_dispatch:
@@ -1371,16 +1373,22 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         pressure1 = lane_waiting[1] * 4 + lane_running[1]
 
         old_boundary = self.boundary
+        offset = abs(self.boundary - self.init_boundary)
+        base_h = self.boundary_hysteresis
 
-        boundary_offset = abs(self.boundary - self.init_boundary) + 1
-        hysteresis = self.boundary_hysteresis / boundary_offset
+        if pressure0 < pressure1:
+            candidate = self._clamp_boundary(self.boundary + 1)
+            moving_outward = abs(candidate - self.init_boundary) > offset
+            h = base_h * (offset + 1) if moving_outward else base_h
+            if pressure0 + h < pressure1:
+                self.boundary = candidate
 
-        if pressure0 + hysteresis < pressure1:
-            # lane 1 busier -> shift more future requests to lane 0
-            self.boundary += 1
-        elif pressure1 + hysteresis < pressure0:
-            # lane 0 busier -> shift more future requests to lane 1
-            self.boundary -= 1
+        elif pressure1 < pressure0:
+            candidate = self._clamp_boundary(self.boundary - 1)
+            moving_outward = abs(candidate - self.init_boundary) > offset
+            h = base_h * (offset + 1) if moving_outward else base_h
+            if pressure1 + h < pressure0:
+                self.boundary = candidate
 
         self.boundary = self._clamp_boundary(self.boundary)
 
@@ -1448,6 +1456,34 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                 candidate_indices.append(idx)
         return candidate_indices
 
+    def _maybe_override_preferred_lane_for_idle_ranks(
+        self,
+        preferred_lane: int | None,
+        candidate_indices: list[int],
+        current_counts: list[list[int]],
+    ) -> list[int]:
+        if preferred_lane is None or not candidate_indices:
+            return candidate_indices
+
+        if any(current_counts[idx][0] == 0 for idx in candidate_indices):
+            return candidate_indices
+
+        idle_indices = [
+            idx
+            for idx in self._get_candidate_indices(None, len(current_counts))
+            if current_counts[idx][0] == 0
+        ]
+        if not idle_indices:
+            return candidate_indices
+
+        logger.debug(
+            "[DPLBAsyncMPClient] bypassing boundary for idle ranks: "
+            f"preferred_lane={preferred_lane}, "
+            f"preferred_candidates={candidate_indices}, "
+            f"idle_candidates={idle_indices}"
+        )
+        return idle_indices
+
     def _select_engine_by_score(
         self,
         candidate_indices: list[int],
@@ -1491,6 +1527,12 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         candidate_indices = self._get_candidate_indices(
             preferred_lane, len(current_counts)
         )
+        if self.maybe_override:
+            candidate_indices = self._maybe_override_preferred_lane_for_idle_ranks(
+                preferred_lane,
+                candidate_indices,
+                current_counts,
+            )
         if not candidate_indices:
             candidate_indices = self._get_candidate_indices(
                 None, len(current_counts)
@@ -1527,6 +1569,14 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                     preferred_lane,
                     len(current_counts),
                 )
+                if self.maybe_override:
+                    candidate_indices = (
+                        self._maybe_override_preferred_lane_for_idle_ranks(
+                            preferred_lane,
+                            candidate_indices,
+                            current_counts,
+                        )
+                    )
 
                 # If req_k falls inside the boundary window
                 # (preferred_lane is None), or no lane matched, use original LB

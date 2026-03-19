@@ -34,7 +34,7 @@ mkdir -p "$RESULT_DIR"
 if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
 else
-  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-30}"
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-25}"
 fi
 
 # TTFT_MAX_STATIC   >0 → fixed value (seconds) for all requests
@@ -54,7 +54,7 @@ export TTFT_JITTER_HIGH="${TTFT_JITTER_HIGH:-1.5}"
 
 # default: normal 4 1 8
 export KQOS_DIST="${KQOS_DIST:-normal}"
-export QOS_K_MEAN="${QOS_K_MEAN:-4}"
+export QOS_K_MEAN="${QOS_K_MEAN:-4.5}"
 export QOS_K_STD="${QOS_K_STD:-1.5}"
 export QOS_K_MAX="${QOS_K_MAX:-8}"
 
