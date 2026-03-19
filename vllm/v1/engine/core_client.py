@@ -1254,6 +1254,9 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
 
         self.k_min = min(qos_k_cases)
         self.k_max = max(qos_k_cases)
+        self.k_boundary_width = max(
+            1, int(os.environ.get("VLLM_DP_K_BOUNDARY_WIDTH", 1))
+        )
 
         default_boundary = int(
             os.environ.get(
@@ -1266,14 +1269,20 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
             boundaries = [
                 int(x.strip()) for x in boundary_spec.split(",") if x.strip()
             ]
-            if len(boundaries) != 2:
-                raise ValueError(
-                    "VLLM_DP_K_BOUNDARIES must contain exactly two integers"
+            if len(boundaries) == 1:
+                lower_boundary, upper_boundary = self._get_boundary_range(
+                    boundaries[0]
                 )
-            lower_boundary, upper_boundary = sorted(boundaries)
+            elif len(boundaries) == 2:
+                lower_boundary, upper_boundary = sorted(boundaries)
+            else:
+                raise ValueError(
+                    "VLLM_DP_K_BOUNDARIES must contain one or two integers"
+                )
         else:
-            lower_boundary = default_boundary
-            upper_boundary = default_boundary
+            lower_boundary, upper_boundary = self._get_boundary_range(
+                default_boundary
+            )
 
         self.fixed_k_lower_boundary = max(
             self.k_min, min(lower_boundary, self.k_max)
@@ -1300,13 +1309,19 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                     f"k_range=[{self.k_min}, {self.k_max}], "
                     f"fixed_boundaries=("
                     f"{self.fixed_k_lower_boundary}, "
-                    f"{self.fixed_k_upper_boundary})"
+                    f"{self.fixed_k_upper_boundary}), "
+                    f"boundary_width={self.k_boundary_width}"
                 )
             else:
+                lower_boundary, upper_boundary = self._get_boundary_range(
+                    self.boundary
+                )
                 logger.info(
                     f"[DPLBAsyncMPClient] Using lanes={self.engine_lanes}, "
                     f"k_range=[{self.k_min}, {self.k_max}], "
                     f"init_boundary={self.boundary}, "
+                    f"boundary_range=({lower_boundary}, {upper_boundary}), "
+                    f"boundary_width={self.k_boundary_width}, "
                     f"cooldown={self.boundary_cooldown}"
                 )
 
@@ -1316,6 +1331,18 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         extra_args = sampling_params.extra_args if sampling_params else None
         k_qos = extra_args.get("k_qos", 0) if extra_args else 0
         return int(k_qos or 0)
+
+    def _clamp_boundary(self, boundary: int) -> int:
+        return max(self.k_min, min(boundary, self.k_max))
+
+    def _get_boundary_range(self, boundary: int) -> tuple[int, int]:
+        boundary = self._clamp_boundary(boundary)
+        lower_boundary = boundary - (self.k_boundary_width - 1) // 2
+        upper_boundary = boundary + self.k_boundary_width // 2
+        return (
+            self._clamp_boundary(lower_boundary),
+            self._clamp_boundary(upper_boundary),
+        )
 
     @log_enter_exit(logger)
     def update_boundary(self) -> None:
@@ -1355,22 +1382,30 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
             # lane 0 busier -> shift more future requests to lane 1
             self.boundary -= 1
 
-        self.boundary = max(self.k_min, min(self.boundary, self.k_max))
+        self.boundary = self._clamp_boundary(self.boundary)
 
         if self.boundary != old_boundary:
             self.boundary_cooldown_remaining = self.boundary_cooldown
+            lower_boundary, upper_boundary = self._get_boundary_range(
+                self.boundary
+            )
             logger.debug(
                 "[DPLBAsyncMPClient] boundary updated: "
                 f"{old_boundary} -> {self.boundary} "
-                f"(cooldown={self.boundary_cooldown_remaining}; "
+                f"(range=({lower_boundary}, {upper_boundary}), "
+                f"cooldown={self.boundary_cooldown_remaining}; "
                 f"lane0: waiting={lane_waiting[0]}, running={lane_running[0]}, pressure={pressure0}; "
                 f"lane1: waiting={lane_waiting[1]}, running={lane_running[1]}, pressure={pressure1})"
             )
         else:
+            lower_boundary, upper_boundary = self._get_boundary_range(
+                self.boundary
+            )
             logger.debug(
                 "[DPLBAsyncMPClient] boundary = "
                 f"{self.boundary} "
-                f"(cooldown={self.boundary_cooldown_remaining})"
+                f"(range=({lower_boundary}, {upper_boundary}), "
+                f"cooldown={self.boundary_cooldown_remaining})"
             )
 
     @log_enter_exit(logger)
@@ -1383,13 +1418,15 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         if req_k <= 0:
             return None
 
-        if req_k < self.boundary:
+        lower_boundary, upper_boundary = self._get_boundary_range(self.boundary)
+
+        if req_k < lower_boundary:
             return 0
-        if req_k > self.boundary:
+        if req_k > upper_boundary:
             return 1
 
-        # req_k == boundary:
-        # fall back to original load balancing across all engines
+        # Requests inside the boundary window fall back to original load
+        # balancing across all engines.
         return None
 
     @staticmethod
@@ -1491,8 +1528,9 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
                     len(current_counts),
                 )
 
-                # If req_k == boundary (preferred_lane is None), or no lane matched,
-                # use original LB over all engines.
+                # If req_k falls inside the boundary window
+                # (preferred_lane is None), or no lane matched, use original LB
+                # over all engines.
                 # TODO: 没考虑超过2个lane的时候
                 if not candidate_indices:
                     candidate_indices = self._get_candidate_indices(
