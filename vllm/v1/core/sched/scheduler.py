@@ -493,8 +493,87 @@ class Scheduler(SchedulerInterface):
             for r in k_groups[k]:
                 self.waiting.add_request(r)
 
+    def _estimate_waiting_tokens_for_ttft_agnostic(
+        self,
+        request: Request,
+        token_budget: int,
+    ) -> int:
+        if token_budget <= 0:
+            return 0
+
+        if request.status not in (RequestStatus.WAITING, RequestStatus.PREEMPTED):
+            return 0
+
+        num_new_tokens = request.num_tokens - request.num_computed_tokens
+        threshold = self.scheduler_config.long_prefill_token_threshold
+        if 0 < threshold < num_new_tokens:
+            num_new_tokens = threshold
+
+        if num_new_tokens <= 0:
+            return 0
+
+        return min(num_new_tokens, token_budget)
+
+    def _estimate_ttft_agnostic_next_k_tokens(
+        self,
+        next_k: int,
+        token_budget: int,
+    ) -> int:
+        """Estimate tokens contributed by the next higher-k bucket."""
+        next_k_tokens = 0
+        for request in self.waiting:
+            req_k = self._req_k(request)
+            if req_k < next_k:
+                continue
+            if req_k > next_k:
+                break
+            remaining_budget = token_budget - next_k_tokens
+            if remaining_budget <= 0:
+                break
+            next_k_tokens += self._estimate_waiting_tokens_for_ttft_agnostic(
+                request, remaining_budget
+            )
+        return next_k_tokens
+
+    def _should_merge_ttft_agnostic(
+        self,
+        current_batch_tokens: int,
+        current_k: int,
+        next_k: int,
+        token_budget: int,
+    ) -> bool:
+        """Decide whether merging the next k bucket improves token throughput."""
+        if current_batch_tokens <= 0 or current_k <= 0 or next_k <= current_k:
+            return True
+
+        next_k_tokens = self._estimate_ttft_agnostic_next_k_tokens(
+            next_k, token_budget
+        )
+        if next_k_tokens <= 0:
+            return False
+
+        merged_tokens = current_batch_tokens + next_k_tokens
+        if merged_tokens <= current_batch_tokens:
+            return False
+
+        if not self.perf_model.enabled:
+            return current_batch_tokens < (
+                self.max_num_scheduled_tokens * self.ttft_agnostic_min_batch_ratio
+            )
+
+        current_ms = self.perf_model.predict(current_batch_tokens, max(current_k, 1))
+        merged_ms = self.perf_model.predict(merged_tokens, max(next_k, 1))
+        if current_ms <= 0 or merged_ms <= 0:
+            return current_batch_tokens < (
+                self.max_num_scheduled_tokens * self.ttft_agnostic_min_batch_ratio
+            )
+
+        current_tp = current_batch_tokens / current_ms
+        merged_tp = merged_tokens / merged_ms
+        return merged_tp >= current_tp
+
     def _reorder_waiting_ttft_agnostic(self) -> None:
-        """Reorder waiting queue by k_qos ascending for max throughput."""
+        """Reorder waiting queue by k_qos ascending."""
         if not self.waiting:
             return
 
@@ -502,7 +581,7 @@ class Scheduler(SchedulerInterface):
         while self.waiting:
             reqs.append(self.waiting.pop_request())
 
-        reqs.sort(key=lambda r: self._req_k(r))
+        reqs.sort(key=lambda r: (self._req_k(r), r.arrival_time))
         for r in reqs:
             self.waiting.add_request(r)
 
@@ -731,9 +810,6 @@ class Scheduler(SchedulerInterface):
             if self.sched_mode == ScheduleMode.EDF
             else 0
         )
-        # Tracks the max k in the current batch (for TTFT_AGNOSTIC barrier).
-        # Initialised to current_serving_k because running decode requests
-        # are already part of the batch.
         ttft_agnostic_batch_k = current_serving_k
         # For FIFO_SWAP
         # print(f"[DDDBUG] current_batch_k {current_batch_k}")
@@ -774,23 +850,22 @@ class Scheduler(SchedulerInterface):
 
                 request = self.waiting.peek_request()
 
-                # --- TTFT_AGNOSTIC: k-group barrier ---
-                # When we are about to increase the batch k, check whether
-                # the batch is already well-utilised.  If so, stop here and
-                # let the higher-k requests form their own batch in the next
-                # scheduling step.  Otherwise merge them (carry-leftover).
                 if self.sched_mode == ScheduleMode.TTFT_AGNOSTIC:
                     req_k = self._req_k(request)
-                    if (req_k > ttft_agnostic_batch_k
-                            and ttft_agnostic_batch_k > 0):
-                        batch_util = (
-                            self.max_num_scheduled_tokens - token_budget)
-                        if batch_util >= (
-                                self.max_num_scheduled_tokens
-                                * self.ttft_agnostic_min_batch_ratio):
+                    if ttft_agnostic_batch_k <= 0:
+                        ttft_agnostic_batch_k = req_k
+                    elif req_k > ttft_agnostic_batch_k:
+                        current_batch_tokens = (
+                            self.max_num_scheduled_tokens - token_budget
+                        )
+                        if not self._should_merge_ttft_agnostic(
+                            current_batch_tokens,
+                            ttft_agnostic_batch_k,
+                            req_k,
+                            token_budget,
+                        ):
                             break
-                    ttft_agnostic_batch_k = max(
-                        ttft_agnostic_batch_k, req_k)
+                        ttft_agnostic_batch_k = req_k
                 # --- EDF: k-aware admission control ---
                 # Gate requests whose k exceeds edf_target_k (the predicted
                 # future batch k after near-finished high-k decodes drain).
