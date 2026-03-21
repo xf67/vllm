@@ -88,7 +88,7 @@ SHARE_ATTN_ACROSS_TOPK="${SHARE_ATTN_ACROSS_TOPK:-true}"
 # -------------------- Dispatch Metrics Log -----------------
 # 设置后，scheduler每步写一行CSV，记录dispatch K、队列K分布等
 # 留空则不记录
-DISPATCH_LOG="${DISPATCH_LOG:-/home/xxf/NewVLLM/vllm/test/log}"
+DISPATCH_LOG="${DISPATCH_LOG:-/home/xxf/NewVLLM/vllm/test/log.csv}"
 
 # -------------------- Debug & Profiling --------------------
 # 取消注释以下行来启用

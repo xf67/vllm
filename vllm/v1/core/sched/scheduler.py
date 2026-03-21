@@ -544,33 +544,115 @@ class Scheduler(SchedulerInterface):
     ) -> bool:
         """Decide whether merging the next k bucket improves token throughput."""
         if current_batch_tokens <= 0 or current_k <= 0 or next_k <= current_k:
+            logger.debug(
+                "TTFT_AGNOSTIC merge check skipped: "
+                "current_batch_tokens=%d current_k=%d next_k=%d token_budget=%d",
+                current_batch_tokens,
+                current_k,
+                next_k,
+                token_budget,
+            )
             return True
 
         next_k_tokens = self._estimate_ttft_agnostic_next_k_tokens(
             next_k, token_budget
         )
         if next_k_tokens <= 0:
+            logger.debug(
+                "TTFT_AGNOSTIC merge decision: merge=False "
+                "current_batch_tokens=%d current_k=%d next_k=%d "
+                "token_budget=%d next_k_tokens=%d reason=no_next_k_tokens",
+                current_batch_tokens,
+                current_k,
+                next_k,
+                token_budget,
+                next_k_tokens,
+            )
             return False
 
         merged_tokens = current_batch_tokens + next_k_tokens
         if merged_tokens <= current_batch_tokens:
+            logger.debug(
+                "TTFT_AGNOSTIC merge decision: merge=False "
+                "current_batch_tokens=%d current_k=%d next_k=%d "
+                "token_budget=%d next_k_tokens=%d merged_tokens=%d "
+                "reason=non_increasing_tokens",
+                current_batch_tokens,
+                current_k,
+                next_k,
+                token_budget,
+                next_k_tokens,
+                merged_tokens,
+            )
             return False
 
         if not self.perf_model.enabled:
-            return current_batch_tokens < (
+            decision = current_batch_tokens < (
                 self.max_num_scheduled_tokens * self.ttft_agnostic_min_batch_ratio
             )
+            logger.debug(
+                "TTFT_AGNOSTIC merge decision: merge=%s "
+                "current_batch_tokens=%d current_k=%d next_k=%d "
+                "token_budget=%d next_k_tokens=%d merged_tokens=%d "
+                "perf_model_enabled=False min_batch_ratio=%.4f",
+                decision,
+                current_batch_tokens,
+                current_k,
+                next_k,
+                token_budget,
+                next_k_tokens,
+                merged_tokens,
+                self.ttft_agnostic_min_batch_ratio,
+            )
+            return decision
 
         current_ms = self.perf_model.predict(current_batch_tokens, max(current_k, 1))
         merged_ms = self.perf_model.predict(merged_tokens, max(next_k, 1))
         if current_ms <= 0 or merged_ms <= 0:
-            return current_batch_tokens < (
+            decision = current_batch_tokens < (
                 self.max_num_scheduled_tokens * self.ttft_agnostic_min_batch_ratio
             )
+            logger.debug(
+                "TTFT_AGNOSTIC merge decision: merge=%s "
+                "current_batch_tokens=%d current_k=%d next_k=%d "
+                "token_budget=%d next_k_tokens=%d merged_tokens=%d "
+                "current_ms=%.4f merged_ms=%.4f perf_model_fallback=True "
+                "min_batch_ratio=%.4f",
+                decision,
+                current_batch_tokens,
+                current_k,
+                next_k,
+                token_budget,
+                next_k_tokens,
+                merged_tokens,
+                current_ms,
+                merged_ms,
+                self.ttft_agnostic_min_batch_ratio,
+            )
+            return decision
 
         current_tp = current_batch_tokens / current_ms
         merged_tp = merged_tokens / merged_ms
-        return merged_tp >= current_tp
+        decision = merged_tp >= current_tp
+        logger.debug(
+            "TTFT_AGNOSTIC merge decision: merge=%s "
+            "current_batch_tokens=%d current_k=%d next_k=%d "
+            "token_budget=%d next_k_tokens=%d merged_tokens=%d "
+            "current_ms=%.4f merged_ms=%.4f "
+            "current_tp=%.6f merged_tp=%.6f",
+            decision,
+            current_batch_tokens,
+            current_k,
+            next_k,
+            token_budget,
+            next_k_tokens,
+            merged_tokens,
+            current_ms,
+            merged_ms,
+            current_tp,
+            merged_tp,
+        )
+        return decision
 
     def _reorder_waiting_ttft_agnostic(self) -> None:
         """Reorder waiting queue by k_qos ascending."""
