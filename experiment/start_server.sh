@@ -17,7 +17,8 @@
 set -euo pipefail
 
 # -------------------- Model & Server -----------------------
-MODEL="${MODEL:-/home/xxf/models/olmoe-7B-A1B}"
+MODEL="${MODEL:-/home/xxf/MoE-Prism/moe-gate-finetune-olmoe/uni_05_pa_001arc_8-32/checkpoint-3039}" 
+# /home/xxf/models/olmoe-7B-A1B
 PORT="${PORT:-8000}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
 DP_SIZE="${DP_SIZE:-2}"

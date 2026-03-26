@@ -15,7 +15,8 @@
 
 set -euo pipefail
 
-MODEL=${MODEL:-"/home/xxf/models/olmoe-7B-A1B"}
+MODEL=${MODEL:-"/home/xxf/MoE-Prism/moe-gate-finetune-olmoe/uni_05_pa_001arc_8-32/checkpoint-3039"}
+# /home/xxf/models/olmoe-7B-A1B
 ENDPOINT="/v1/completions"
 PORT=${PORT:-8000}
 SEED=42
@@ -23,7 +24,7 @@ SEED=42
 MODE=${1:-"test"}
 INPUT_LEN=${2:-2048}
 OUTPUT_LEN=${OUTPUT_LEN:-64}
-NUM_PROMPTS=${NUM_PROMPTS:-1024}
+NUM_PROMPTS=${NUM_PROMPTS:-2048}
 DATASET_NAME=${DATASET_NAME:-"random2"}
 TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/vllm/experiment/AzureLLMInferenceTrace_filtered2.csv"}
 
@@ -54,9 +55,10 @@ export TTFT_JITTER_HIGH="${TTFT_JITTER_HIGH:-1.5}"
 
 # default: normal 4 1 8
 export KQOS_DIST="${KQOS_DIST:-normal}"
-export QOS_K_MEAN="${QOS_K_MEAN:-4.5}"
-export QOS_K_STD="${QOS_K_STD:-1.5}"
-export QOS_K_MAX="${QOS_K_MAX:-8}"
+export QOS_K_MEAN="${QOS_K_MEAN:-16}"
+export QOS_K_STD="${QOS_K_STD:-8}"
+export QOS_K_MAX="${QOS_K_MAX:-32}"
+export DIV_K="${DIV_K:-1}"
 
 # 在uniform的时候，mean和std分别表示min和max
 # export KQOS_DIST="uniform"

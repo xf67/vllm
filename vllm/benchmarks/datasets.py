@@ -164,6 +164,17 @@ class BenchmarkDataset(ABC):
         std: float,
         num_experts: int
     ) -> int:
+        self.div_k = int(os.environ.get('DIV_K', '1'))
+        k_ori = self.get_random_kqos_inner(mean, std, num_experts)
+        k_off = (k_ori + self.div_k -1)//self.div_k
+        return k_off
+
+    def get_random_kqos_inner(
+        self,
+        mean: float,
+        std: float,
+        num_experts: int
+    ) -> int:
         """
         Get K-Qos.
 
@@ -179,6 +190,7 @@ class BenchmarkDataset(ABC):
 
         返回值始终被裁剪到 [1, num_experts]
         """
+        
         if num_experts < 1:
             raise ValueError("num_experts should >= 1")
         
