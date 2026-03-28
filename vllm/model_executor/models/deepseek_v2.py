@@ -336,6 +336,10 @@ class DeepseekV2MoE(nn.Module):
             else None,
         )
 
+        # Mark for piecewise CUDA graph: split between attention and MoE so
+        # attention graph can be shared across different top-k.
+        self._vllm_moe_module = True
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -1398,7 +1402,19 @@ class DeepseekV2ForCausalLM(
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
+        **kwargs
     ) -> torch.Tensor | IntermediateTensors:
+        try:
+            k_qos = kwargs['k_qos']
+        except:
+            # print("[DDDBUG] k_qos not found")
+            k_qos = -1
+        # print(f"[DDDBUG] k is {k_qos}")
+        if k_qos>0 and k_qos<self.config.n_routed_experts:
+            for layer in self.model.layers: #因为后面直接走graph，所以k_qos要打在这里
+                if isinstance(layer.mlp, DeepseekV2MLP):
+                    continue
+                layer.mlp.experts.top_k = k_qos
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds
         )
