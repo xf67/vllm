@@ -19,6 +19,7 @@ from functools import partial
 from itertools import islice
 
 import torch
+import os
 from torch import nn
 
 from vllm.attention import Attention
@@ -480,6 +481,7 @@ class OlmoeForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors
         )
+        self.qos_aware = int(os.environ.get("QOS_AWARE", '0') ) >= 1
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.embed_input_ids(input_ids)
@@ -498,7 +500,7 @@ class OlmoeForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
             # print("[DDDBUG] k_qos not found")
             k_qos = -1
         # print(f"[DDDBUG] k is {k_qos}")
-        if k_qos>0 and k_qos<self.config.num_experts:
+        if self.qos_aware and k_qos>0 and k_qos<self.config.num_experts:
             for layer in self.model.layers: #因为后面直接走graph，所以k_qos要打在这里
                 layer.mlp.experts.top_k = k_qos
         hidden_states = self.model(
