@@ -20,8 +20,7 @@ models:
     mean_std:
       - [12, 4]
       - [12, 3]
-      - [8, 4]
-    rates: [15, 12.5, 10]
+    rates: [15, 12.5, 10, 7.5, 5, 2.5]
     schedulers: online
 
   - name_prefix: olmoe32
@@ -29,8 +28,7 @@ models:
     mean_std:
       - [16, 6]
       - [16, 5]
-      - [12, 6]
-    rates: [30, 25, 20]
+    rates: [35, 30, 25, 20, 15, 10]
     schedulers: online
 
   - name_prefix: dpsk24_offline
