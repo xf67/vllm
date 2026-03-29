@@ -1,0 +1,52 @@
+default_env_anchor: defaults_env
+bench_args_mode: name
+dispatch_log_dir: /home/xxf/NewVLLM/vllm/test/dispatch_logs
+
+scheduler_groups:
+  online:
+    - online_ours
+    - online_vllmK
+    - online_vllmD
+    - online_vllmT
+
+  offline:
+    - offline_ours
+    - offline_vllmK
+    - offline_vllmD
+
+models:
+  - name_prefix: dpsk24
+    env_anchor: dpsk_24_a100
+    mean_std:
+      - [12, 4]
+      - [12, 3]
+      - [8, 4]
+    rates: [15, 12.5, 10]
+    schedulers: online
+
+  - name_prefix: olmoe32
+    env_anchor: olmoe_32_a100
+    mean_std:
+      - [16, 6]
+      - [16, 5]
+      - [12, 6]
+    rates: [30, 25, 20]
+    schedulers: online
+
+  - name_prefix: dpsk24_offline
+    env_anchor: dpsk_24_a100
+    mean_std:
+      - [12, 4]
+      - [12, 3]
+      - [8, 4]
+    rates: [inf]
+    schedulers: offline
+
+  - name_prefix: olmoe32_offline
+    env_anchor: olmoe32_a100
+    mean_std:
+      - [16, 6]
+      - [16, 5]
+      - [12, 6]
+    rates: [inf]
+    schedulers: offline

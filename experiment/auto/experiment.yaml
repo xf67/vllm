@@ -1,0 +1,1164 @@
+dpsk: &dpsk
+  VLLM_DP_K_BOUNDARY_WIDTH: 20
+  VLLM_DP_K_THRESHOLD: 12
+  VLLM_DP_K_HYSTERESIS: 32
+  VLLM_DP_K_COOLDOWN: 16
+
+dpsk_24_a100: &dpsk_24_a100
+  <<: *dpsk
+  MODEL: "/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500"
+  QOS_K_LIST: "r1,24"
+  PERF_MODEL_PATH: "home/xxf/NewVLLM/test/dpsk_perf_model_24.json"
+
+dpsk_6_a100: &dpsk_6_a100
+  <<: *dpsk
+  MODEL: "/home/xxf/NewVLLM/models/deepseek-v2-lite"
+  QOS_K_LIST: "r1,6"
+  PERF_MODEL_PATH: "home/xxf/NewVLLM/test/dpsk_perf_model_6.json"
+
+
+olmoe: &olmoe
+  VLLM_DP_K_BOUNDARY_WIDTH: 24
+  VLLM_DP_K_THRESHOLD: 16
+  VLLM_DP_K_HYSTERESIS: 32
+  VLLM_DP_K_COOLDOWN: 16
+
+olmoe_32_a100: &olmoe_32_a100
+  <<: *olmoe
+  MODEL: "/home/xxf/NewVLLM/models_olmoe/uni_05_pa_001arc_8-32/checkpoint-3039"
+  QOS_K_LIST: "r1,32"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/olmoe_perf_model_32.json"
+
+olmoe_8_a100: &olmoe_8_a100
+  <<: *olmoe
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-7B-A1B"
+  QOS_K_LIST: "r1,8"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/olmoe_perf_model_8.json"
+
+
+
+
+online_ours: &online_ours
+  DP_SIZE: 2
+  VLLM_DP_K_AWARE_DISPATCH: 1
+  QOS_AWARE: 1
+
+online_vllm_k_aware: &online_vllmK
+  DP_SIZE: 2
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 1
+
+online_vllm_default: &online_vllmD
+  DP_SIZE: 2
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 0
+
+online_vllm_default_tp: &online_vllmT
+  DP_SIZE: 1
+  TP_SIZE: 2
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 0
+
+offline_ours: &offline_ours
+  DP_SIZE: 1
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 1
+  SCHED_MODE: "ttft_agnostic"
+
+offline_vllm_k_aware: &offline_vllmK
+  DP_SIZE: 1
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 1
+
+offline_vllm_default: &offline_vllmD
+  DP_SIZE: 1
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 0
+
+defaults_env: &defaults_env
+  NUM_PROMPTS: 2048
+
+# server_args这个是策略,fifo或ttft_agnostic
+# bench_args本质上是bench_results里的名字
+
+experiments:
+
+  - name: dpsk24-online_ours-m12s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s4-r15.csv
+
+  - name: dpsk24-online_ours-m12s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s4-r125.csv
+
+  - name: dpsk24-online_ours-m12s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s4-r10.csv
+
+  - name: dpsk24-online_vllmK-m12s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s4-r15.csv
+
+  - name: dpsk24-online_vllmK-m12s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s4-r125.csv
+
+  - name: dpsk24-online_vllmK-m12s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s4-r10.csv
+
+  - name: dpsk24-online_vllmD-m12s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s4-r15.csv
+
+  - name: dpsk24-online_vllmD-m12s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s4-r125.csv
+
+  - name: dpsk24-online_vllmD-m12s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s4-r10.csv
+
+  - name: dpsk24-online_vllmT-m12s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s4-r15.csv
+
+  - name: dpsk24-online_vllmT-m12s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s4-r125.csv
+
+  - name: dpsk24-online_vllmT-m12s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s4-r10.csv
+
+  - name: dpsk24-online_ours-m12s3-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s3-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s3-r15.csv
+
+  - name: dpsk24-online_ours-m12s3-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s3-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s3-r125.csv
+
+  - name: dpsk24-online_ours-m12s3-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m12s3-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m12s3-r10.csv
+
+  - name: dpsk24-online_vllmK-m12s3-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s3-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s3-r15.csv
+
+  - name: dpsk24-online_vllmK-m12s3-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s3-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s3-r125.csv
+
+  - name: dpsk24-online_vllmK-m12s3-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m12s3-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m12s3-r10.csv
+
+  - name: dpsk24-online_vllmD-m12s3-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s3-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s3-r15.csv
+
+  - name: dpsk24-online_vllmD-m12s3-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s3-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s3-r125.csv
+
+  - name: dpsk24-online_vllmD-m12s3-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m12s3-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m12s3-r10.csv
+
+  - name: dpsk24-online_vllmT-m12s3-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s3-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s3-r15.csv
+
+  - name: dpsk24-online_vllmT-m12s3-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s3-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s3-r125.csv
+
+  - name: dpsk24-online_vllmT-m12s3-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m12s3-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m12s3-r10.csv
+
+  - name: dpsk24-online_ours-m8s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m8s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m8s4-r15.csv
+
+  - name: dpsk24-online_ours-m8s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m8s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m8s4-r125.csv
+
+  - name: dpsk24-online_ours-m8s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_ours-m8s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_ours
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_ours-m8s4-r10.csv
+
+  - name: dpsk24-online_vllmK-m8s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m8s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m8s4-r15.csv
+
+  - name: dpsk24-online_vllmK-m8s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m8s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m8s4-r125.csv
+
+  - name: dpsk24-online_vllmK-m8s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmK-m8s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmK-m8s4-r10.csv
+
+  - name: dpsk24-online_vllmD-m8s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m8s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m8s4-r15.csv
+
+  - name: dpsk24-online_vllmD-m8s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m8s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m8s4-r125.csv
+
+  - name: dpsk24-online_vllmD-m8s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmD-m8s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmD-m8s4-r10.csv
+
+  - name: dpsk24-online_vllmT-m8s4-r15
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m8s4-r15]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 15
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m8s4-r15.csv
+
+  - name: dpsk24-online_vllmT-m8s4-r125
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m8s4-r125]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 12.5
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m8s4-r125.csv
+
+  - name: dpsk24-online_vllmT-m8s4-r10
+    server_args: [fifo]
+    bench_args: [dpsk24-online_vllmT-m8s4-r10]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: 10
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24-online_vllmT-m8s4-r10.csv
+
+  - name: olmoe32-online_ours-m16s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s6-r30.csv
+
+  - name: olmoe32-online_ours-m16s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s6-r25.csv
+
+  - name: olmoe32-online_ours-m16s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s6-r20.csv
+
+  - name: olmoe32-online_vllmK-m16s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s6-r30.csv
+
+  - name: olmoe32-online_vllmK-m16s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s6-r25.csv
+
+  - name: olmoe32-online_vllmK-m16s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s6-r20.csv
+
+  - name: olmoe32-online_vllmD-m16s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s6-r30.csv
+
+  - name: olmoe32-online_vllmD-m16s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s6-r25.csv
+
+  - name: olmoe32-online_vllmD-m16s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s6-r20.csv
+
+  - name: olmoe32-online_vllmT-m16s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s6-r30.csv
+
+  - name: olmoe32-online_vllmT-m16s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s6-r25.csv
+
+  - name: olmoe32-online_vllmT-m16s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s6-r20.csv
+
+  - name: olmoe32-online_ours-m16s5-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s5-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s5-r30.csv
+
+  - name: olmoe32-online_ours-m16s5-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s5-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s5-r25.csv
+
+  - name: olmoe32-online_ours-m16s5-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m16s5-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m16s5-r20.csv
+
+  - name: olmoe32-online_vllmK-m16s5-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s5-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s5-r30.csv
+
+  - name: olmoe32-online_vllmK-m16s5-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s5-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s5-r25.csv
+
+  - name: olmoe32-online_vllmK-m16s5-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m16s5-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m16s5-r20.csv
+
+  - name: olmoe32-online_vllmD-m16s5-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s5-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s5-r30.csv
+
+  - name: olmoe32-online_vllmD-m16s5-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s5-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s5-r25.csv
+
+  - name: olmoe32-online_vllmD-m16s5-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m16s5-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m16s5-r20.csv
+
+  - name: olmoe32-online_vllmT-m16s5-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s5-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s5-r30.csv
+
+  - name: olmoe32-online_vllmT-m16s5-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s5-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s5-r25.csv
+
+  - name: olmoe32-online_vllmT-m16s5-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m16s5-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m16s5-r20.csv
+
+  - name: olmoe32-online_ours-m12s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m12s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m12s6-r30.csv
+
+  - name: olmoe32-online_ours-m12s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m12s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m12s6-r25.csv
+
+  - name: olmoe32-online_ours-m12s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_ours-m12s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_ours-m12s6-r20.csv
+
+  - name: olmoe32-online_vllmK-m12s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m12s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m12s6-r30.csv
+
+  - name: olmoe32-online_vllmK-m12s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m12s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m12s6-r25.csv
+
+  - name: olmoe32-online_vllmK-m12s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmK-m12s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmK-m12s6-r20.csv
+
+  - name: olmoe32-online_vllmD-m12s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m12s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m12s6-r30.csv
+
+  - name: olmoe32-online_vllmD-m12s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m12s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m12s6-r25.csv
+
+  - name: olmoe32-online_vllmD-m12s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmD-m12s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmD-m12s6-r20.csv
+
+  - name: olmoe32-online_vllmT-m12s6-r30
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m12s6-r30]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 30
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m12s6-r30.csv
+
+  - name: olmoe32-online_vllmT-m12s6-r25
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m12s6-r25]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 25
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m12s6-r25.csv
+
+  - name: olmoe32-online_vllmT-m12s6-r20
+    server_args: [fifo]
+    bench_args: [olmoe32-online_vllmT-m12s6-r20]
+    env:
+      <<: *defaults_env
+      <<: *olmoe_32_a100
+      <<: *online_vllmT
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: 20
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32-online_vllmT-m12s6-r20.csv
+
+  - name: dpsk24_offline-offline_ours-m12s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_ours-m12s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_ours-m12s4-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmK-m12s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmK-m12s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmK-m12s4-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmD-m12s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmD-m12s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmD-m12s4-rinf.csv
+
+  - name: dpsk24_offline-offline_ours-m12s3-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_ours-m12s3-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_ours-m12s3-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmK-m12s3-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmK-m12s3-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmK-m12s3-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmD-m12s3-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmD-m12s3-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 3
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmD-m12s3-rinf.csv
+
+  - name: dpsk24_offline-offline_ours-m8s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_ours-m8s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_ours-m8s4-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmK-m8s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmK-m8s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmK-m8s4-rinf.csv
+
+  - name: dpsk24_offline-offline_vllmD-m8s4-rinf
+    server_args: [fifo]
+    bench_args: [dpsk24_offline-offline_vllmD-m8s4-rinf]
+    env:
+      <<: *defaults_env
+      <<: *dpsk_24_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 8
+      QOS_K_STD: 4
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/dpsk24_offline-offline_vllmD-m8s4-rinf.csv
+
+  - name: olmoe32_offline-offline_ours-m16s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_ours-m16s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_ours-m16s6-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmK-m16s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmK-m16s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmK-m16s6-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmD-m16s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmD-m16s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmD-m16s6-rinf.csv
+
+  - name: olmoe32_offline-offline_ours-m16s5-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_ours-m16s5-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_ours-m16s5-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmK-m16s5-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmK-m16s5-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmK-m16s5-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmD-m16s5-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmD-m16s5-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 16
+      QOS_K_STD: 5
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmD-m16s5-rinf.csv
+
+  - name: olmoe32_offline-offline_ours-m12s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_ours-m12s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_ours
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_ours-m12s6-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmK-m12s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmK-m12s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmK
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmK-m12s6-rinf.csv
+
+  - name: olmoe32_offline-offline_vllmD-m12s6-rinf
+    server_args: [fifo]
+    bench_args: [olmoe32_offline-offline_vllmD-m12s6-rinf]
+    env:
+      <<: *defaults_env
+      <<: *olmoe32_a100
+      <<: *offline_vllmD
+      QOS_K_MEAN: 12
+      QOS_K_STD: 6
+      REQUEST_RATES: inf
+      DISPATCH_LOG: /home/xxf/NewVLLM/vllm/test/dispatch_logs/olmoe32_offline-offline_vllmD-m12s6-rinf.csv

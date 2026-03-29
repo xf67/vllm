@@ -2,15 +2,16 @@
 import os
 import sys
 import yaml
+import json
 import time
 import signal
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-SERVER_SCRIPT = "/home/xxf/NewVLLM/vllm/test/start_server.sh"
-BENCH_SCRIPT = "/home/xxf/NewVLLM/vllm/test/run_random_bench.sh"
-EXPERIMENTS_YAML = "/home/xxf/NewVLLM/vllm/test/experiments.yaml"
+SERVER_SCRIPT = "/home/xxf/NewVLLM/vllm/experiment/start_server.sh"
+BENCH_SCRIPT = "/home/xxf/NewVLLM/vllm/experiment/run_random_bench.sh"
+EXPERIMENTS_YAML = "/home/xxf/NewVLLM/vllm/experiment/auto/experiment.yaml"
 WORKDIR = "/home/xxf/NewVLLM/vllm"
 
 LOG_ROOT = Path("/home/xxf/NewVLLM/vllm/test/auto_logs")
@@ -280,7 +281,7 @@ def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
 def main():
     ensure_dir(LOG_ROOT)
 
-    experiments = load_experiments(EXPERIMENTS_JSON)
+    experiments = load_experiments(EXPERIMENTS_YAML)
     if not experiments:
         print("[ERROR] no experiments found in json")
         sys.exit(1)
