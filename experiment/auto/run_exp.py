@@ -286,8 +286,12 @@ def main():
         print("[ERROR] no experiments found in json")
         sys.exit(1)
 
+    total = len(experiments)
+    print(f"[INFO] total experiments: {total}")
+
     summary = []
     for idx, exp in enumerate(experiments, start=1):
+        print(f"[PROGRESS] {idx}/{total} experiments")
         result = run_one_experiment(idx, exp)
         summary.append(result)
 

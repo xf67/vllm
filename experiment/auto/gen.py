@@ -217,3 +217,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# python '/home/xxf/NewVLLM/vllm/experiment/auto/gen.py' --metadata /home/xxf/NewVLLM/vllm/experiment/auto/metadata.yaml --matrix /home/xxf/NewVLLM/vllm/experiment/auto/matrix.yaml --output /home/xxf/NewVLLM/vllm/experiment/auto/experiment.yaml
