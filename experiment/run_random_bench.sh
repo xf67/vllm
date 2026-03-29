@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-MODEL=${MODEL:-"/home/xxf/MoE-Prism/moe-gate-finetune-olmoe/uni_05_pa_001arc_8-32/checkpoint-3039"}
+MODEL=${MODEL:-"/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500"}
 # /home/xxf/models/olmoe-7B-A1B
 ENDPOINT="/v1/completions"
 PORT=${PORT:-8000}
@@ -24,7 +24,7 @@ SEED=42
 MODE=${1:-"test"}
 INPUT_LEN=${2:-2048}
 OUTPUT_LEN=${OUTPUT_LEN:-64}
-NUM_PROMPTS=${NUM_PROMPTS:-2048}
+NUM_PROMPTS=${NUM_PROMPTS:-1024}
 DATASET_NAME=${DATASET_NAME:-"random2"}
 TRACE_CSV=${TRACE_CSV:-"/home/xxf/NewVLLM/vllm/experiment/AzureLLMInferenceTrace_filtered2.csv"}
 
@@ -35,7 +35,7 @@ mkdir -p "$RESULT_DIR"
 if [[ "$MODE" = "ttft_agnostic" || "$MODE" = "inf" ]]; then
   IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-inf}"
 else
-  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-25}"
+  IFS=' ' read -ra REQUEST_RATES <<< "${REQUEST_RATES:-5}"
 fi
 
 # TTFT_MAX_STATIC   >0 → fixed value (seconds) for all requests
@@ -47,7 +47,7 @@ fi
 
 unset TTFT_MAX_STATIC
 
-export PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/olmoe_perf_model.json}"
+export PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/dpsk_perf_model_24.json}"
 export TTFT_MULTIPLIER="${TTFT_MULTIPLIER:-3}"
 export TTFT_QUEUE_MS="${TTFT_QUEUE_MS:-10}"
 export TTFT_JITTER_LOW="${TTFT_JITTER_LOW:-1}"
@@ -55,9 +55,9 @@ export TTFT_JITTER_HIGH="${TTFT_JITTER_HIGH:-1.5}"
 
 # default: normal 4 1 8
 export KQOS_DIST="${KQOS_DIST:-normal}"
-export QOS_K_MEAN="${QOS_K_MEAN:-16}"
-export QOS_K_STD="${QOS_K_STD:-8}"
-export QOS_K_MAX="${QOS_K_MAX:-32}"
+export QOS_K_MEAN="${QOS_K_MEAN:-8}"
+export QOS_K_STD="${QOS_K_STD:-5}"
+export QOS_K_MAX="${QOS_K_MAX:-24}"
 export DIV_K="${DIV_K:-1}"
 
 # 在uniform的时候，mean和std分别表示min和max
@@ -112,6 +112,7 @@ for rate in "${REQUEST_RATES[@]}"; do
     --save-result \
     --result-dir "$RESULT_DIR" \
     --result-filename "$result_file" \
+    --metric-percentiles "75,90,95,99" \
     $TRACE_ARGS
 
   echo ""
