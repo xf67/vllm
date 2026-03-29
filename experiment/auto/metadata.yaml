@@ -80,7 +80,7 @@ online_vllm_default: &online_vllmD
 online_vllm_default_tp: &online_vllmT
   DP_SIZE: 1
   TP_SIZE: 2
-  SHARE_ATTN_ACROSS_TOPK: false
+  SHARE_ATTN_ACROSS_TOPK: "false"
   GPU_MEM_UTIL: 0.6
   VLLM_DP_K_AWARE_DISPATCH: 0
   QOS_AWARE: 0
