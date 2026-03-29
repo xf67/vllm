@@ -8,14 +8,26 @@ dpsk_24_a100: &dpsk_24_a100
   <<: *dpsk
   MODEL: "/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500"
   QOS_K_LIST: "r1,24"
-  PERF_MODEL_PATH: "home/xxf/NewVLLM/test/dpsk_perf_model_24.json"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/dpsk_perf_model_24.json"
 
 dpsk_6_a100: &dpsk_6_a100
   <<: *dpsk
   MODEL: "/home/xxf/NewVLLM/models/deepseek-v2-lite"
   QOS_K_LIST: "r1,6"
-  PERF_MODEL_PATH: "home/xxf/NewVLLM/test/dpsk_perf_model_6.json"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/dpsk_perf_model_6.json"
 
+
+dpsk_24_a6000: &dpsk_24_a6000
+  <<: *dpsk
+  MODEL: "/home/xxf/NewVLLM/models/dpsk-p/checkpoint-2500"
+  QOS_K_LIST: "r1,24"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/dpsk_perf_model_24.json"
+
+dpsk_6_a6000: &dpsk_6_a6000
+  <<: *dpsk
+  MODEL: "/home/xxf/NewVLLM/models/deepseek-v2-lite"
+  QOS_K_LIST: "r1,6"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/dpsk_perf_model_6.json"
 
 olmoe: &olmoe
   VLLM_DP_K_BOUNDARY_WIDTH: 24
@@ -35,6 +47,18 @@ olmoe_8_a100: &olmoe_8_a100
   QOS_K_LIST: "r1,8"
   PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/olmoe_perf_model_8.json"
 
+
+olmoe_32_a6000: &olmoe_32_a6000
+  <<: *olmoe
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-p"
+  QOS_K_LIST: "r1,32"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/olmoe_perf_model_32.json"
+
+olmoe_8_a6000: &olmoe_8_a6000
+  <<: *olmoe
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-7B-A1B"
+  QOS_K_LIST: "r1,8"
+  PERF_MODEL_PATH: "/home/xxf/NewVLLM/test/olmoe_perf_model_8.json"
 
 
 
