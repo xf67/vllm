@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -108,18 +109,19 @@ def build_experiment_block(
     return "\n".join(lines)
 
 
-def generate_experiments_text(matrix_cfg: dict[str, Any]) -> str:
+def generate_experiments_text(matrix_cfg: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     default_env_anchor = matrix_cfg.get("default_env_anchor", "defaults_env")
     bench_args_mode = matrix_cfg.get("bench_args_mode", "name")
     dispatch_log_dir = matrix_cfg["dispatch_log_dir"]
     scheduler_groups = matrix_cfg.get("scheduler_groups") or {}
-
-    # 可选：不同 scheduler 对应不同 server_args
     server_args_map = matrix_cfg.get("server_args_map") or {}
-
     models = matrix_cfg["models"]
 
     blocks = ["experiments:", ""]
+
+    total_count = 0
+    per_model_counter = Counter()
+    per_scheduler_counter = Counter()
 
     for model_cfg in models:
         model_name = model_cfg["name_prefix"]
@@ -166,7 +168,29 @@ def generate_experiments_text(matrix_cfg: dict[str, Any]) -> str:
             blocks.append(block)
             blocks.append("")
 
-    return "\n".join(blocks).rstrip() + "\n"
+            total_count += 1
+            per_model_counter[model_name] += 1
+            per_scheduler_counter[scheduler] += 1
+
+    summary = {
+        "total": total_count,
+        "per_model": dict(per_model_counter),
+        "per_scheduler": dict(per_scheduler_counter),
+    }
+
+    return "\n".join(blocks).rstrip() + "\n", summary
+
+
+def print_summary(summary: dict[str, Any]) -> None:
+    print(f"Total experiments: {summary['total']}")
+
+    print("\nBy model:")
+    for model, cnt in sorted(summary["per_model"].items()):
+        print(f"  {model}: {cnt}")
+
+    print("\nBy scheduler:")
+    for scheduler, cnt in sorted(summary["per_scheduler"].items()):
+        print(f"  {scheduler}: {cnt}")
 
 
 def main():
@@ -182,14 +206,14 @@ def main():
     with open(args.matrix, "r", encoding="utf-8") as f:
         matrix_cfg = yaml.safe_load(f)
 
-    experiments_text = generate_experiments_text(matrix_cfg)
+    experiments_text, summary = generate_experiments_text(matrix_cfg)
 
     final_text = metadata_text.rstrip() + "\n\n" + experiments_text
     Path(args.output).write_text(final_text, encoding="utf-8")
+
     print(f"Generated: {args.output}")
+    print_summary(summary)
 
 
 if __name__ == "__main__":
     main()
-
-# python '/home/xxf/NewVLLM/vllm/experiment/auto/gen.py' --metadata /home/xxf/NewVLLM/vllm/experiment/auto/metadata.yaml --matrix /home/xxf/NewVLLM/vllm/experiment/auto/matrix.yaml --output /home/xxf/NewVLLM/vllm/experiment/auto/experiment.yaml
