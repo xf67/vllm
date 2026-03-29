@@ -15,7 +15,7 @@ scheduler_groups:
     - offline_vllmD
 
 models:
-  - name_prefix: dpsk24
+  - name_prefix: dpsk_24
     env_anchor: dpsk_24_a100
     mean_std:
       - [12, 4]
@@ -23,7 +23,7 @@ models:
     rates: [15, 12.5, 10, 7.5, 5, 2.5]
     schedulers: online
 
-  - name_prefix: olmoe32
+  - name_prefix: olmoe_32
     env_anchor: olmoe_32_a100
     mean_std:
       - [16, 6]
@@ -31,7 +31,7 @@ models:
     rates: [35, 30, 25, 20, 15, 10]
     schedulers: online
 
-  - name_prefix: dpsk24_offline
+  - name_prefix: dpsk_24_offline
     env_anchor: dpsk_24_a100
     mean_std:
       - [12, 4]
@@ -40,8 +40,8 @@ models:
     rates: [inf]
     schedulers: offline
 
-  - name_prefix: olmoe32_offline
-    env_anchor: olmoe32_a100
+  - name_prefix: olmoe_32_offline
+    env_anchor: olmoe_32_a100
     mean_std:
       - [16, 6]
       - [16, 5]
