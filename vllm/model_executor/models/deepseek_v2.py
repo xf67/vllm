@@ -28,7 +28,7 @@ import typing
 from collections.abc import Callable, Iterable
 from itertools import islice
 from typing import Any
-
+import os
 import torch
 from torch import nn
 from transformers import DeepseekV2Config, DeepseekV3Config
@@ -1371,6 +1371,7 @@ class DeepseekV2ForCausalLM(
             self.config.num_hidden_layers - self.config.first_k_dense_replace
         )
         self.set_moe_parameters()
+        self.qos_aware = int(os.environ.get('QOS_AWARE', '1'))>=1
 
     def set_moe_parameters(self):
         self.expert_weights = []
@@ -1410,7 +1411,7 @@ class DeepseekV2ForCausalLM(
             # print("[DDDBUG] k_qos not found")
             k_qos = -1
         # print(f"[DDDBUG] k is {k_qos}")
-        if k_qos>0 and k_qos<self.config.n_routed_experts:
+        if self.qos_aware and k_qos>0 and k_qos<self.config.n_routed_experts:
             for layer in self.model.layers: #因为后面直接走graph，所以k_qos要打在这里
                 if isinstance(layer.mlp, DeepseekV2MLP):
                     continue
