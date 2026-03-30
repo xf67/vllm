@@ -217,6 +217,62 @@ def kill_process_group(proc: Optional[subprocess.Popen], name: str, grace_sec: i
     close_proc_files(proc)
 
 
+def kill_port(port: str, host: str = "127.0.0.1") -> None:
+    del host  # 当前按端口清理即可
+    port = str(port).strip()
+    if not port:
+        return
+
+    lsof_path = shutil.which("lsof")
+    if lsof_path:
+        try:
+            result = subprocess.run(
+                [lsof_path, "-ti", f"tcp:{port}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+            )
+            pids = [x.strip() for x in result.stdout.splitlines() if x.strip()]
+            if pids:
+                print(f"[INFO] killing processes on port {port}: {' '.join(pids)}")
+                for pid in pids:
+                    try:
+                        os.kill(int(pid), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+
+                time.sleep(2)
+
+                for pid in pids:
+                    try:
+                        os.kill(int(pid), 0)
+                        print(f"[WARN] pid {pid} still alive, force killing...")
+                        os.kill(int(pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            return
+        except Exception as e:
+            print(f"[WARN] lsof cleanup failed for port {port}: {e}")
+
+    fuser_path = shutil.which("fuser")
+    if fuser_path:
+        try:
+            print(f"[INFO] using fuser to clean port {port}")
+            subprocess.run(
+                [fuser_path, "-k", f"{port}/tcp"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            time.sleep(2)
+            return
+        except Exception as e:
+            print(f"[WARN] fuser cleanup failed for port {port}: {e}")
+
+    print(f"[WARN] neither lsof nor fuser is available, skip port cleanup for {port}")
+
+
 def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
     name = exp["name"]
     exp_dir = LOG_ROOT / f"{exp_idx:03d}_{name}"
@@ -274,6 +330,10 @@ def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     try:
+        port = final_env.get("PORT", "30000")
+        host = final_env.get("HOST", "127.0.0.1")
+        kill_port(port, host)
+
         server_proc = popen_cmd(
             cmd=server_cmd,
             env=final_env,
