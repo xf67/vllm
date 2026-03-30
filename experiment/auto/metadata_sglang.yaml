@@ -1,0 +1,49 @@
+
+dpsk_24_a100: &dpsk_24_a100
+  MODEL: "/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500"
+
+dpsk_6_a100: &dpsk_6_a100
+  MODEL: "/home/xxf/NewVLLM/models/deepseek-v2-lite"
+
+dpsk_24_a6000: &dpsk_24_a6000
+  MODEL: "/home/xxf/NewVLLM/models/dpsk-p/checkpoint-2500"
+
+dpsk_6_a6000: &dpsk_6_a6000
+  MODEL: "/home/xxf/NewVLLM/models/deepseek-v2-lite"
+
+olmoe_32_a100: &olmoe_32_a100
+  MODEL: "/home/xxf/NewVLLM/models_olmoe/uni_05_pa_001arc_8-32/checkpoint-3039"
+
+olmoe_8_a100: &olmoe_8_a100
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-7B-A1B"
+
+olmoe_32_a6000: &olmoe_32_a6000
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-p"
+
+olmoe_8_a6000: &olmoe_8_a6000
+  MODEL: "/home/xxf/NewVLLM/models/olmoe-7B-A1B"
+
+
+online_sglangD: &online_sglangD
+  DP_SIZE: 2
+  TP_SIZE: 1
+
+online_sglangD: &online_sglangT
+  DP_SIZE: 1
+  TP_SIZE: 2
+
+offline_sglang: &offline_sglang
+  DP_SIZE: 1
+  TP_SIZE: 1
+
+defaults_env: &defaults_env
+  SERVER_CONDA_ENV: "sglang"
+  BENCH_CONDA_ENV: "newest"
+  HOST: "127.0.0.1"
+  PORT: "30000"
+  NUM_PROMPTS: 2048
+  DATASET_NAME: "random2"
+  TRACE_CSV: "/home/xxf/NewVLLM/vllm/experiment/AzureLLMInferenceTrace_filtered2.csv"
+  BACKEND_KIND: "openai"
+  ENDPOINT: "/completions"
+  RESULT_ROOT: "/home/xxf/NewVLLM/vllm/test/bench_results"

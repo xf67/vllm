@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-SERVER_SCRIPT = "/home/xxf/NewVLLM/vllm/experiment/start_sglang_server.sh"
+SERVER_SCRIPT = "/home/xxf/NewVLLM/vllm/experiment/start_server_sglang.sh"
 BENCH_SCRIPT = "/home/xxf/NewVLLM/vllm/experiment/run_random_bench_sglang.sh"
 EXPERIMENTS_YAML = "/home/xxf/NewVLLM/vllm/experiment/auto/experiment_sglang.yaml"
 WORKDIR = "/home/xxf/NewVLLM/vllm"
@@ -19,16 +19,13 @@ LOG_ROOT = Path("/home/xxf/NewVLLM/vllm/test/auto_logs_sglang")
 COOLDOWN_SECONDS = 5
 SERVER_STOP_GRACE = 20
 
-SERVER_READY_MAX_RETRY = 180
-SERVER_READY_INTERVAL = 2
-
 DEFAULT_SERVER_ARGS: List[str] = []
 DEFAULT_BENCH_ARGS: List[str] = ["sglang", "2048"]
 
 DEFAULT_ENV: Dict[str, str] = {
     # -------------------- conda env --------------------
     "SERVER_CONDA_ENV": "sglang",
-    "BENCH_CONDA_ENV": "vllm",
+    "BENCH_CONDA_ENV": "newest",
 
     # -------------------- shared --------------------
     "HOST": "127.0.0.1",
@@ -220,34 +217,6 @@ def kill_process_group(proc: Optional[subprocess.Popen], name: str, grace_sec: i
     close_proc_files(proc)
 
 
-def wait_for_server_ready(final_env: Dict[str, str]) -> bool:
-    api_base = final_env["API_BASE"]
-    ready_url = f"{api_base}/models"
-
-    curl_cmd = ["curl", "-sSf", ready_url]
-    api_key = final_env.get("API_KEY", "").strip()
-    if api_key:
-        curl_cmd = ["curl", "-sSf", "-H", f"Authorization: Bearer {api_key}", ready_url]
-
-    print(f"[INFO] waiting for server ready: {ready_url}")
-    for i in range(1, SERVER_READY_MAX_RETRY + 1):
-        ret = subprocess.run(
-            curl_cmd,
-            cwd=WORKDIR,
-            env=final_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if ret.returncode == 0:
-            print("[INFO] server is ready")
-            return True
-        print(f"[WAIT] {i}/{SERVER_READY_MAX_RETRY} not ready yet...")
-        time.sleep(SERVER_READY_INTERVAL)
-
-    print("[ERROR] server did not become ready in time")
-    return False
-
-
 def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
     name = exp["name"]
     exp_dir = LOG_ROOT / f"{exp_idx:03d}_{name}"
@@ -300,7 +269,6 @@ def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
         "server_conda_env": server_conda_env,
         "bench_conda_env": bench_conda_env,
         "server_started": False,
-        "server_ready": False,
         "bench_returncode": None,
         "ok": False,
     }
@@ -315,12 +283,6 @@ def run_one_experiment(exp_idx: int, exp: Dict[str, Any]) -> Dict[str, Any]:
             conda_env=server_conda_env,
         )
         status["server_started"] = True
-
-        if not wait_for_server_ready(final_env):
-            status["bench_returncode"] = -1
-            return status
-
-        status["server_ready"] = True
 
         bench_proc = popen_cmd(
             cmd=bench_cmd,

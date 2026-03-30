@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-MODEL_NAME="${MODEL_NAME:-/home/xxf/NewVLLM/models/olmoe-7B-A1B}"
+MODEL_NAME="${MODEL:-/home/xxf/NewVLLM/models/olmoe-7B-A1B}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-30000}"
 API_BASE="${API_BASE:-http://${HOST}:${PORT}}"

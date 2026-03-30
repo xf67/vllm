@@ -31,17 +31,19 @@
 
 set -euo pipefail
 
-export CC=/usr/bin/gcc-12
-export CXX=/usr/bin/g++-12
-export CUDAHOSTCXX=/usr/bin/g++-12
-export NVCC_CCBIN=/usr/bin/g++-12
+# only needed in our A6000 machine
+# export CC=/usr/bin/gcc-12
+# export CXX=/usr/bin/g++-12
+# export CUDAHOSTCXX=/usr/bin/g++-12
+# export NVCC_CCBIN=/usr/bin/g++-12
 
-MODEL="${MODEL:-/home/xxf/NewVLLM/models/olmoe-7B-A1B}"
-SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-/home/xxf/NewVLLM/models/olmoe-7B-A1B}"
+MODEL="${MODEL:-/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500}"
+SERVED_MODEL_NAME="${MODEL:-/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500}"
 
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-30000}"
 TP_SIZE="${TP_SIZE:-1}"
+DP_SIZE="${DP_SIZE:-1}"
 
 MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.90}"
 CONTEXT_LENGTH="${CONTEXT_LENGTH:-4096}"
@@ -62,6 +64,7 @@ CMD=(
   --host "$HOST"
   --port "$PORT"
   --tp "$TP_SIZE"
+  --dp "$DP_SIZE"
   --mem-fraction-static "$MEM_FRACTION_STATIC"
   --context-length "$CONTEXT_LENGTH"
   --schedule-policy "$SCHEDULE_POLICY"
@@ -93,6 +96,7 @@ echo "  Served model name:   $SERVED_MODEL_NAME"
 echo "  Host:                $HOST"
 echo "  Port:                $PORT"
 echo "  TP size:             $TP_SIZE"
+echo "  DP size:             $DP_SIZE"
 echo "  Mem fraction:        $MEM_FRACTION_STATIC"
 echo "  Context length:      $CONTEXT_LENGTH"
 echo "  Schedule policy:     $SCHEDULE_POLICY"
