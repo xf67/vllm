@@ -229,5 +229,6 @@ ep_kernels_workspace/
 test/
 test2/
 test_old/
+test-vllm-ok
 
 !experiment/AzureLLMInferenceTrace_filtered2.csv
