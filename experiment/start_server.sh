@@ -17,19 +17,22 @@
 set -euo pipefail
 
 # -------------------- Model & Server -----------------------
-MODEL="${MODEL:-/home/xxf/MoE-Prism/moe-gate-finetune-olmoe/uni_05_pa_001arc_8-32/checkpoint-3039}" 
+MODEL="${MODEL:-/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500}" 
 # /home/xxf/models/olmoe-7B-A1B
+# ~/MoE-Prism/moe-gate-finetune-deepseek/uni_05_pa_001arc_8-24/checkpoint-2500
 PORT="${PORT:-8000}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
-DP_SIZE="${DP_SIZE:-2}"
+DP_SIZE="${DP_SIZE:-1}"
+TP_SIZE="${TP_SIZE:-1}"
+PP_SIZE="${PP_SIZE:-1}"
 
 # -------------------- Scheduling Mode ----------------------
 # fifo          : 纯FCFS，forward时k=batch中max(k_qos)
 # edf           : Earliest-Deadline-First，按TTFT紧迫度排序
 # ttft_agnostic : 离线最大吞吐，按k_qos分组batch
 # fifo_safe_swap: fifo但是有个换序
-SCHED_MODE="${1:-${SCHED_MODE:-fifo}}"
-VLLM_DP_K_AWARE_DISPATCH="${2:-${VLLM_DP_K_AWARE_DISPATCH:-0}}"
+SCHED_MODE="${SCHED_MODE:-fifo}"
+VLLM_DP_K_AWARE_DISPATCH="${VLLM_DP_K_AWARE_DISPATCH:-0}"
 # [a,b,c,d...]表示dp_rank0,1,2,3...分别属于a,b,c,d...lane
 VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
 # 固定K边界模式开关；开启后:
@@ -38,15 +41,15 @@ VLLM_DP_ENGINE_LANES="${VLLM_DP_ENGINE_LANES:-0,1}"
 #   中间区间按 4*waiting+running 做负载均衡
 VLLM_DP_FIXED_K_BOUNDARY_DISPATCH="${VLLM_DP_FIXED_K_BOUNDARY_DISPATCH:-0}"
 # 固定K边界，格式为 lower,upper
-VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-2,7}"
+VLLM_DP_K_BOUNDARIES="${VLLM_DP_K_BOUNDARIES:-}"
 # boundary覆盖的k宽度；=1时与原先单点boundary行为一致
-VLLM_DP_K_BOUNDARY_WIDTH="${VLLM_DP_K_BOUNDARY_WIDTH:-2}"
+VLLM_DP_K_BOUNDARY_WIDTH="${VLLM_DP_K_BOUNDARY_WIDTH:-20}"
 # 动态boundary模式的初始topk boundary
-VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-5}"
+VLLM_DP_K_THRESHOLD="${VLLM_DP_K_THRESHOLD-12}"
 # boundary移动的条件是 running+waiting*4 作为pressure，pressure的差值超过这个hysteresis
-VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-8}"
+VLLM_DP_K_HYSTERESIS="${VLLM_DP_K_HYSTERESIS-32}"
 # cooldown是指变化boundary后几个step之内不能再变
-VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-8}"
+VLLM_DP_K_COOLDOWN="${VLLM_DP_K_COOLDOWN-4}"
 # lane内没有waiting请求时，允许跨lane挑选waiting=0的rank
 MAYBE_OVERRIDE="${MAYBE_OVERRIDE:-0}"
 
@@ -59,11 +62,11 @@ QOS_AWARE="${QOS_AWARE:-1}"
 # QOS_K_LIST: CUDA graph capture的k范围
 #   格式: r<start>,<end>  (range) 或 k1,k2,k3 (list)
 #   例: r1,8 表示 k=1..8;  2,4,6,8 表示捕获这4个k
-QOS_K_LIST="${QOS_K_LIST:-r1,8}"
+QOS_K_LIST="${QOS_K_LIST:-r1,24}"
 
 # -------------------- Perf Model (EDF) ---------------------
 # prefill时间预测模型JSON路径，EDF模式必需
-PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/olmoe_perf_model.json}"
+PERF_MODEL_PATH="${PERF_MODEL_PATH:-/home/xxf/NewVLLM/test/dpsk_perf_model_24.json}"
 
 # -------------------- EDF 参数 -----------------------------
 # TTFT安全系数: slack < est_prefill * factor 时紧急调度
@@ -143,6 +146,9 @@ echo "  DP K BOUNDARIES:   $VLLM_DP_K_BOUNDARIES"
 echo "  DP K BDR WIDTH:    $VLLM_DP_K_BOUNDARY_WIDTH"
 echo "  DP K THRESHOLD:    $VLLM_DP_K_THRESHOLD"
 echo "  MAYBE_OVERRIDE:    $MAYBE_OVERRIDE"
+echo "  DP:                $DP_SIZE"
+echo "  TP:                $TP_SIZE"
+echo "  PP:                $PP_SIZE"
 echo "------------------------------------------------------------"
 echo "  EDF params:"
 echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"
@@ -168,4 +174,6 @@ exec vllm serve "$MODEL" \
     --no-enable-prefix-caching \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}" \
-    --data-parallel-size "$DP_SIZE"
+    --data-parallel-size "$DP_SIZE" \
+    --tensor-parallel-size "$TP_SIZE" \
+    --pipeline-parallel-size "$PP_SIZE"
