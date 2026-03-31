@@ -153,6 +153,9 @@ def load_online_points(result_root: Path) -> list[OnlinePoint]:
             raise ValueError(f"Unexpected online result directory name: {result_dir.name}")
 
         json_files = sorted(result_dir.glob("rate_*.json"))
+        if not json_files:
+            print(f"[WARN] Skip empty result directory: {result_dir}")
+            continue
         if len(json_files) != 1:
             raise ValueError(
                 f"Expected exactly one rate_*.json in {result_dir}, found {len(json_files)}"
