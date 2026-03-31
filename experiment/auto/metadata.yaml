@@ -85,6 +85,15 @@ online_vllm_default_tp: &online_vllmT
   VLLM_DP_K_AWARE_DISPATCH: 0
   QOS_AWARE: 0
 
+online_vllm_default_tp: &online_vllmTE
+  DP_SIZE: 1
+  TP_SIZE: 2
+  EP: 1
+  SHARE_ATTN_ACROSS_TOPK: "false"
+  GPU_MEM_UTIL: 0.6
+  VLLM_DP_K_AWARE_DISPATCH: 0
+  QOS_AWARE: 0
+
 offline_ours: &offline_ours
   DP_SIZE: 1
   VLLM_DP_K_AWARE_DISPATCH: 0
