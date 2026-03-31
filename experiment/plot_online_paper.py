@@ -64,10 +64,8 @@ class OnlinePoint:
     strategy: str
     dist: str
     configured_rate: float
-    request_throughput: float
-    mean_ttft_ms: float
-    p99_ttft_ms: float
     result_dir: Path
+    metrics: dict[str, object]
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,21 +86,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--x-metric",
-        choices=["request_throughput", "configured_rate"],
-        default="request_throughput",
-        help="Metric to use on the x-axis.",
+        default="request_rate",
+        help="Metric to use on the x-axis. Supports JSON keys or 'configured_rate'.",
     )
     parser.add_argument(
+        "--y-metric",
         "--ttft-metric",
-        choices=["mean_ttft_ms", "p99_ttft_ms"],
+        dest="y_metric",
         default="mean_ttft_ms",
-        help="TTFT statistic to use on the y-axis.",
+        help="Metric to use on the y-axis. Supports any numeric JSON key.",
     )
     parser.add_argument(
+        "--ymax",
         "--ttft-ymax",
+        dest="ymax",
         type=float,
         default=500.0,
-        help="Upper bound of the TTFT axis. Points above it are clipped.",
+        help="Upper bound of the y-axis. Points above it are clipped.",
     )
     parser.add_argument(
         "--workloads",
@@ -170,10 +170,8 @@ def load_online_points(result_root: Path) -> list[OnlinePoint]:
                 strategy=match.group("strategy"),
                 dist=match.group("dist"),
                 configured_rate=float(data["request_rate"]),
-                request_throughput=float(data["request_throughput"]),
-                mean_ttft_ms=float(data["mean_ttft_ms"]),
-                p99_ttft_ms=float(data["p99_ttft_ms"]),
                 result_dir=result_dir,
+                metrics=data,
             )
         )
 
@@ -193,26 +191,58 @@ def group_points(
     return grouped
 
 
-def x_value(point: OnlinePoint, x_metric: str) -> float:
-    return (
-        point.request_throughput
-        if x_metric == "request_throughput"
-        else point.configured_rate
-    )
+def metric_value(point: OnlinePoint, metric_name: str) -> float:
+    if metric_name in {"configured_rate", "request_rate"}:
+        return point.configured_rate
+
+    if metric_name not in point.metrics:
+        available = ", ".join(sorted(point.metrics.keys()))
+        raise KeyError(
+            f"Metric '{metric_name}' not found in {point.result_dir}. "
+            f"Available keys: {available}"
+        )
+
+    value = point.metrics[metric_name]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"Metric '{metric_name}' in {point.result_dir} is not numeric: {type(value).__name__}"
+        )
+    return float(value)
 
 
-def y_value(point: OnlinePoint, ttft_metric: str) -> float:
-    return point.mean_ttft_ms if ttft_metric == "mean_ttft_ms" else point.p99_ttft_ms
+def metric_label(metric_name: str) -> str:
+    common_labels = {
+        "configured_rate": "Configured Request Rate (req/s)",
+        "request_rate": "Configured Request Rate (req/s)",
+        "request_throughput": "Request Throughput (req/s)",
+        "output_throughput": "Output Throughput (tok/s)",
+        "total_token_throughput": "Total Token Throughput (tok/s)",
+        "mean_ttft_ms": "Mean TTFT (ms)",
+        "median_ttft_ms": "Median TTFT (ms)",
+        "p75_ttft_ms": "P75 TTFT (ms)",
+        "p90_ttft_ms": "P90 TTFT (ms)",
+        "p95_ttft_ms": "P95 TTFT (ms)",
+        "p99_ttft_ms": "P99 TTFT (ms)",
+        "mean_tpot_ms": "Mean TPOT (ms)",
+        "median_tpot_ms": "Median TPOT (ms)",
+        "p75_tpot_ms": "P75 TPOT (ms)",
+        "p90_tpot_ms": "P90 TPOT (ms)",
+        "p95_tpot_ms": "P95 TPOT (ms)",
+        "p99_tpot_ms": "P99 TPOT (ms)",
+        "mean_itl_ms": "Mean ITL (ms)",
+        "median_itl_ms": "Median ITL (ms)",
+        "p75_itl_ms": "P75 ITL (ms)",
+        "p90_itl_ms": "P90 ITL (ms)",
+        "p95_itl_ms": "P95 ITL (ms)",
+        "p99_itl_ms": "P99 ITL (ms)",
+    }
+    if metric_name in common_labels:
+        return common_labels[metric_name]
+    return metric_name.replace("_", " ")
 
 
-def axis_labels(x_metric: str, ttft_metric: str) -> tuple[str, str]:
-    xlabel = (
-        "Request Throughput (req/s)"
-        if x_metric == "request_throughput"
-        else "Configured Request Rate (req/s)"
-    )
-    ylabel = "Mean TTFT (ms)" if ttft_metric == "mean_ttft_ms" else "P99 TTFT (ms)"
-    return xlabel, ylabel
+def axis_labels(x_metric: str, y_metric: str) -> tuple[str, str]:
+    return metric_label(x_metric), metric_label(y_metric)
 
 
 def make_style_maps(points: list[OnlinePoint]) -> dict[str, str]:
@@ -249,18 +279,21 @@ def plot_workload_axis(
     workload: str,
     series_map: dict[tuple[str, str], list[OnlinePoint]],
     x_metric: str,
-    ttft_metric: str,
+    y_metric: str,
     linestyle_map: dict[str, str],
-    ttft_ymax: float | None,
+    ymax: float | None,
 ) -> None:
     series_keys = sorted(
         series_map,
         key=lambda item: (strategy_sort_key(item[0]), dist_sort_key(item[1])),
     )
     for strategy, dist in series_keys:
-        series = sorted(series_map[(strategy, dist)], key=lambda point: x_value(point, x_metric))
-        xs = [x_value(point, x_metric) for point in series]
-        ys = [y_value(point, ttft_metric) for point in series]
+        series = sorted(
+            series_map[(strategy, dist)],
+            key=lambda point: metric_value(point, x_metric),
+        )
+        xs = [metric_value(point, x_metric) for point in series]
+        ys = [metric_value(point, y_metric) for point in series]
         label = f"{STRATEGY_LABELS.get(strategy, strategy)} ({dist_to_label(dist)})"
         ax.plot(
             xs,
@@ -273,12 +306,12 @@ def plot_workload_axis(
             markersize=5.5,
         )
 
-    xlabel, ylabel = axis_labels(x_metric, ttft_metric)
+    xlabel, ylabel = axis_labels(x_metric, y_metric)
     ax.set_title(workload)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    if ttft_ymax is not None:
-        ax.set_ylim(0, ttft_ymax)
+    if ymax is not None:
+        ax.set_ylim(0, ymax)
     ax.margins(x=0.03, y=0.08)
 
 
@@ -294,8 +327,8 @@ def plot_overview(
     all_points: list[OnlinePoint],
     output_dir: Path,
     x_metric: str,
-    ttft_metric: str,
-    ttft_ymax: float | None,
+    y_metric: str,
+    ymax: float | None,
 ) -> None:
     workloads = sorted(grouped, key=workload_sort_key)
     fig, axes = plt.subplots(1, len(workloads), figsize=(7.0 * len(workloads), 4.6))
@@ -309,9 +342,9 @@ def plot_overview(
             workload=workload,
             series_map=grouped[workload],
             x_metric=x_metric,
-            ttft_metric=ttft_metric,
+            y_metric=y_metric,
             linestyle_map=linestyle_map,
-            ttft_ymax=ttft_ymax,
+            ymax=ymax,
         )
 
     handles, labels = axes[0].get_legend_handles_labels()
@@ -324,7 +357,7 @@ def plot_overview(
         bbox_to_anchor=(0.5, 1.06),
     )
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
-    save_figure(fig, output_dir, f"online_{x_metric}_vs_{ttft_metric}_overview")
+    save_figure(fig, output_dir, f"online_{x_metric}_vs_{y_metric}_overview")
 
 
 def plot_per_workload(
@@ -332,8 +365,8 @@ def plot_per_workload(
     all_points: list[OnlinePoint],
     output_dir: Path,
     x_metric: str,
-    ttft_metric: str,
-    ttft_ymax: float | None,
+    y_metric: str,
+    ymax: float | None,
 ) -> None:
     linestyle_map = make_style_maps(all_points)
     for workload in sorted(grouped, key=workload_sort_key):
@@ -343,13 +376,13 @@ def plot_per_workload(
             workload=workload,
             series_map=grouped[workload],
             x_metric=x_metric,
-            ttft_metric=ttft_metric,
+            y_metric=y_metric,
             linestyle_map=linestyle_map,
-            ttft_ymax=ttft_ymax,
+            ymax=ymax,
         )
         ax.legend(frameon=False, ncol=2)
         fig.tight_layout()
-        save_figure(fig, output_dir, f"online_{workload}_{x_metric}_vs_{ttft_metric}")
+        save_figure(fig, output_dir, f"online_{workload}_{x_metric}_vs_{y_metric}")
 
 
 def main() -> None:
@@ -370,16 +403,16 @@ def main() -> None:
         all_points=points,
         output_dir=args.output_dir,
         x_metric=args.x_metric,
-        ttft_metric=args.ttft_metric,
-        ttft_ymax=args.ttft_ymax,
+        y_metric=args.y_metric,
+        ymax=args.ymax,
     )
     plot_per_workload(
         grouped=grouped,
         all_points=points,
         output_dir=args.output_dir,
         x_metric=args.x_metric,
-        ttft_metric=args.ttft_metric,
-        ttft_ymax=args.ttft_ymax,
+        y_metric=args.y_metric,
+        ymax=args.ymax,
     )
 
     print(f"Saved figures to {args.output_dir}")
