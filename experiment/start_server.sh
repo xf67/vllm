@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # -------------------- Model & Server -----------------------
-MODEL="${MODEL:-/home/xxf/NewVLLM/models_dpsk/uni_05_pa_001arc_8-24/checkpoint-2500}" 
+MODEL="${MODEL:-/home/xxf/NewVLLM/models/olmoe-7B-A1B}" 
 # /home/xxf/models/olmoe-7B-A1B
 # ~/MoE-Prism/moe-gate-finetune-deepseek/uni_05_pa_001arc_8-24/checkpoint-2500
 PORT="${PORT:-8000}"
@@ -25,6 +25,7 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.9}"
 DP_SIZE="${DP_SIZE:-1}"
 TP_SIZE="${TP_SIZE:-1}"
 PP_SIZE="${PP_SIZE:-1}"
+EP="${EP:-0}"
 
 # -------------------- Scheduling Mode ----------------------
 # fifo          : 纯FCFS，forward时k=batch中max(k_qos)
@@ -62,7 +63,7 @@ QOS_AWARE="${QOS_AWARE:-1}"
 # QOS_K_LIST: CUDA graph capture的k范围
 #   格式: r<start>,<end>  (range) 或 k1,k2,k3 (list)
 #   例: r1,8 表示 k=1..8;  2,4,6,8 表示捕获这4个k
-QOS_K_LIST="${QOS_K_LIST:-r1,24}"
+QOS_K_LIST="${QOS_K_LIST:-r1,8}"
 
 # -------------------- Perf Model (EDF) ---------------------
 # prefill时间预测模型JSON路径，EDF模式必需
@@ -149,6 +150,7 @@ echo "  MAYBE_OVERRIDE:    $MAYBE_OVERRIDE"
 echo "  DP:                $DP_SIZE"
 echo "  TP:                $TP_SIZE"
 echo "  PP:                $PP_SIZE"
+echo "  EP:                $EP"
 echo "------------------------------------------------------------"
 echo "  EDF params:"
 echo "    TTFT_SAFETY_FACTOR:       $TTFT_SAFETY_FACTOR"
@@ -169,6 +171,11 @@ echo ""
 # ============================================================
 #  Launch
 # ============================================================
+EXTRA_ARGS=()
+if [[ "${EP}" == "1" ]]; then
+    EXTRA_ARGS+=(--enable-expert-parallel)
+fi
+
 exec vllm serve "$MODEL" \
     --port "$PORT" \
     --no-enable-prefix-caching \
@@ -176,4 +183,5 @@ exec vllm serve "$MODEL" \
     --compilation-config "{\"cudagraph_mode\": \"$CUDAGRAPH_MODE\", \"share_attn_cudagraph_across_topk\": $SHARE_ATTN_ACROSS_TOPK}" \
     --data-parallel-size "$DP_SIZE" \
     --tensor-parallel-size "$TP_SIZE" \
-    --pipeline-parallel-size "$PP_SIZE"
+    --pipeline-parallel-size "$PP_SIZE" \
+    "${EXTRA_ARGS[@]}"
