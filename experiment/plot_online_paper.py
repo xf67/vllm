@@ -438,7 +438,7 @@ def plot_per_workload_multi_metrics(
     linestyle_map = make_style_maps(all_points)
     for workload in sorted(grouped, key=workload_sort_key):
         # Keep the full row at a 2n:1.2 aspect ratio.
-        fig, axes = plt.subplots(1, len(y_metrics), figsize=(6.0 * len(y_metrics), 3.6))
+        fig, axes = plt.subplots(1, len(y_metrics), figsize=(6.0 * len(y_metrics), 3.0))
         if len(y_metrics) == 1:
             axes = [axes]
         else:
