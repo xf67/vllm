@@ -60,7 +60,7 @@ MARKER_MAP = {
     "vllmT": "D",
     "vllmTE": "P",
 }
-LINESTYLE_CYCLE = ["-", "--", "-.", ":"]
+LINESTYLE_CYCLE = ["-"] #, "--", "-.", ":"
 METRIC_ALIASES = {
     "ttft_mean": "mean_ttft_ms",
     "ttft_median": "median_ttft_ms",
