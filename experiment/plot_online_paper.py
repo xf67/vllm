@@ -369,6 +369,7 @@ def plot_workload_axis(
     xlabel, ylabel = axis_labels(x_metric, y_metric)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    ax.yaxis.set_label_coords(-0.15, 0.30)
     if all_y_values:
         min_y = min(all_y_values)
         lower = min_y * 0.9 if min_y > 0 else min_y
@@ -438,7 +439,7 @@ def plot_per_workload_multi_metrics(
     linestyle_map = make_style_maps(all_points)
     for workload in sorted(grouped, key=workload_sort_key):
         # Keep the full row at a 2n:1.2 aspect ratio.
-        fig, axes = plt.subplots(1, len(y_metrics), figsize=(6.0 * len(y_metrics), 3.0))
+        fig, axes = plt.subplots(1, len(y_metrics), figsize=(6.0 * len(y_metrics), 2.7))
         if len(y_metrics) == 1:
             axes = [axes]
         else:
@@ -563,3 +564,4 @@ if __name__ == "__main__":
     main()
 
 
+# python3 vllm/experiment/plot_online_paper.py   --y-metrics ttft_p99 ttft_p90 ttft_p75 ttft_mean
