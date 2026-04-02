@@ -30,6 +30,7 @@ from typing import Any
 
 import torch
 from torch import nn
+import os
 
 from vllm.attention import Attention
 from vllm.compilation.decorators import support_torch_compile
@@ -182,6 +183,10 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.gate",
         )
+
+        # Mark for piecewise CUDA graph: split between attention and MoE so
+        # attention graph can be shared across different top-k.
+        self._vllm_moe_module = True
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         assert hidden_states.dim() <= 2, (
@@ -690,6 +695,8 @@ class Qwen3MoeForCausalLM(
         self.num_routed_experts = example_layer.n_routed_experts
         self.num_redundant_experts = example_layer.n_redundant_experts
 
+        self.qos_aware = int(os.environ.get('QOS_AWARE', '1'))>=1
+
     def update_physical_experts_metadata(
         self,
         num_physical_experts: int,
@@ -723,7 +730,17 @@ class Qwen3MoeForCausalLM(
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
+        **kwargs
     ) -> torch.Tensor | IntermediateTensors:
+        try:
+            k_qos = kwargs['k_qos']
+        except:
+            # print("[DDDBUG] k_qos not found")
+            k_qos = -1
+        # print(f"[DDDBUG] k is {k_qos}")
+        if self.qos_aware and k_qos>0 and k_qos<self.config.num_experts_per_tok:
+            for layer in self.model.layers: #因为后面直接走graph，所以k_qos要打在这里
+                layer.mlp.experts.top_k = k_qos
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds
         )
