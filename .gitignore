@@ -230,6 +230,8 @@ test/
 test2/
 test_old/
 test-vllm-ok/
+test-vllm-ok2/
+test-vllm-*/
 test-sglang/
 
 !experiment/AzureLLMInferenceTrace_filtered2.csv
