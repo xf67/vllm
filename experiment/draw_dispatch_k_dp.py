@@ -92,22 +92,16 @@ def main():
     # Base: 深浅蓝
     base_colors = ["#1f77b4", "#9ecae1"]
 
-    # 单栏里上下两张图 + 右侧图例列
-    fig, axes = plt.subplots(
+    fig, (ax_top, ax_bot) = plt.subplots(
         2,
-        2,
-        figsize=(5.1, 3.2),
-        sharex="col",
+        1,
+        figsize=(4.6, 3.2),
+        sharex=True,
         gridspec_kw={
-            "width_ratios": [4.6, 0.9],
             "height_ratios": [1, 1],
             "hspace": 0.15,
-            "wspace": 0.05,
         },
     )
-
-    ax_top, ax_top_leg = axes[0]
-    ax_bot, ax_bot_leg = axes[1]
 
     # ---------- top: Ours ----------
     top_curves = [
@@ -116,6 +110,7 @@ def main():
     ]
 
     valid_files = []
+    max_elapsed = 0.0
 
     for csv_file, label, color in top_curves:
         elapsed, dispatch_k = load_curve(csv_file, min_step=min_step)
@@ -124,23 +119,27 @@ def main():
             continue
         ax_top.plot(elapsed, dispatch_k, label=label, color=color)
         valid_files.append(csv_file)
+        max_elapsed = max(max_elapsed, elapsed[-1])
 
     # ax_top.set_ylabel("Dispatched Routing\nBudget ($k$)")
     ax_top.grid(True, alpha=0.3)
 
     handles, labels = ax_top.get_legend_handles_labels()
-    ax_top_leg.axis("off")
     if handles:
-        ax_top_leg.legend(
+        ax_top.legend(
             handles,
             labels,
-            loc="center left",
-            frameon=False,
+            loc="upper right",
+            bbox_to_anchor=(0.985, 0.98),
+            frameon=True,
+            facecolor="white",
+            edgecolor="none",
+            framealpha=0.85,
             ncol=1,
             handlelength=1.0,
             handletextpad=0.35,
             labelspacing=0.25,
-            borderpad=0.0,
+            borderpad=0.25,
             columnspacing=0.0,
             prop={"size": 7},
         )
@@ -158,35 +157,40 @@ def main():
             continue
         ax_bot.plot(elapsed, dispatch_k, label=label, color=color)
         valid_files.append(csv_file)
+        max_elapsed = max(max_elapsed, elapsed[-1])
 
     ax_bot.set_xlabel("Elapsed Time (s)")
     # ax_bot.set_ylabel("Dispatched Routing\nBudget ($k$)")
     ax_bot.grid(True, alpha=0.3)
 
-
     fig.supylabel("Dispatched Routing Budget ($k$)", x=0.01)
     handles, labels = ax_bot.get_legend_handles_labels()
-    ax_bot_leg.axis("off")
     if handles:
-        ax_bot_leg.legend(
+        ax_bot.legend(
             handles,
             labels,
-            loc="center left",
-            frameon=False,
+            loc="upper right",
+            bbox_to_anchor=(0.985, 0.98),
+            frameon=True,
+            facecolor="white",
+            edgecolor="none",
+            framealpha=0.85,
             ncol=1,
             handlelength=1.0,
             handletextpad=0.35,
             labelspacing=0.25,
-            borderpad=0.0,
+            borderpad=0.25,
             columnspacing=0.0,
             prop={"size": 7},
         )
 
     # 可选：统一 y 范围，便于对比
-    ax_top.set_ylim(10, 25)
-    ax_bot.set_ylim(10, 25)
+    ax_top.set_ylim(20, 37)
+    ax_bot.set_ylim(20, 37)
+    if max_elapsed > 0:
+        ax_top.set_xlim(0, max_elapsed * 1.1)
 
-    plt.tight_layout(pad=0.2)
+    fig.subplots_adjust(left=0.14, right=0.98, bottom=0.14, top=0.98)
 
     if valid_files:
         output_dir = os.path.dirname(os.path.abspath(valid_files[0]))
@@ -202,4 +206,9 @@ if __name__ == "__main__":
     main()
 
 
-# python /home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k_dp.py /home/xxf/NewVLLM/vllm/test/bench_results-12-5/k-awe/log_dp0-15.csv Ours-DP0 /home/xxf/NewVLLM/vllm/test/bench_results-12-5/k-awe/log_dp1-15.csv Ours-DP1 --base /home/xxf/NewVLLM/vllm/test/bench_results-12-5/k-agn/log_dp0-15.csv LB-K_aware-DP0 /home/xxf/NewVLLM/vllm/test/bench_results-12-5/k-agn/log_dp1-15.csv LB-K_aware-DP1 --min_step 50
+# python /home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k_dp.py /home/xxf/NewVLLM/vllm/test2/bench_results-16-8-32/k-awe/log_dp0-30.csv MoE-PRISM-DP0 /home/xxf/NewVLLM/vllm/test2/bench_results-16-8-32/k-awe/log_dp1-30.csv MoE-PRISM-DP1 --base /home/xxf/NewVLLM/vllm/test2/bench_results-16-8-32/k-agn/log_dp0-30.csv vLLM+K-DP0 /home/xxf/NewVLLM/vllm/test2/bench_results-16-8-32/k-agn/log_dp1-30.csv vLLM+K-DP1 --min_step 50
+
+
+
+ 
+# python /home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k_dp.py /home/xxf/NewVLLM/vllm/test-vllm-ok/dispatch_logs/olmoe_32-online_ours-m16s5-r30_dp0.csv Ours-DP0 /home/xxf/NewVLLM/vllm/test-vllm-ok/dispatch_logs/olmoe_32-online_ours-m16s5-r30_dp1.csv Ours-DP1 --base /home/xxf/NewVLLM/vllm/test-vllm-ok/dispatch_logs/olmoe_32-online_vllmK-m16s5-r30_dp0.csv vLLM+K-DP0 /home/xxf/NewVLLM/vllm/test-vllm-ok/dispatch_logs/olmoe_32-online_vllmK-m16s5-r30_dp0.csv vLLM+K-DP1 --min_step 50
