@@ -234,5 +234,6 @@ test-vllm-ok2/
 test-vllm-*/
 test-sglang/
 profile/
+experiment/down_proj_collect_outputs/
 
 !experiment/AzureLLMInferenceTrace_filtered2.csv

@@ -1,25 +1,140 @@
+import argparse
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
+import seaborn as sns
 
-model_name = "/home/xxf/NewVLLM/models/deepseek-v2-lite"
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.bfloat16, device_map='auto', offload_buffers=True)
-model.generation_config = GenerationConfig.from_pretrained(model_name)
-model.generation_config.pad_token_id = model.generation_config.eos_token_id
+MODEL_NAME = "/home/xxf/NewVLLM/models/deepseek-v2-lite"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "down_proj_collect_outputs"
 
-print(model)
 
-collect_inputs = []
+def save_intermediate_results(collected_inputs, output_dir):
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-def hook(module, input, output):
-    ## collect inputs
-    collect_inputs.append(input[0].cpu())
+    raw_path = output_dir / "down_proj_inputs_raw.pt"
+    summary_path = output_dir / "down_proj_inputs_summary.txt"
 
-for name, layer in model.model.layers.named_modules():
-    if "down_proj" in name and ".experts." in name:
-        layer.register_forward_hook(hook)
+    torch.save(collected_inputs, raw_path)
+
+    with summary_path.open("w", encoding="utf-8") as summary_file:
+        summary_file.write(f"num_collected_inputs={len(collected_inputs)}\n")
+        for expert_idx, tensor in enumerate(collected_inputs):
+            flat_tensor = tensor.flatten().to(torch.float32)
+            abs_flat_tensor = flat_tensor.abs()
+            summary_file.write(
+                f"expert={expert_idx} "
+                f"shape={tuple(tensor.shape)} "
+                f"min={flat_tensor.min().item():.6f} "
+                f"max={flat_tensor.max().item():.6f} "
+                f"mean_abs={abs_flat_tensor.mean().item():.6f}\n"
+            )
+
+    print(f"Saved raw inputs to {raw_path}")
+    print(f"Saved summary to {summary_path}")
+
+
+def plot_expert_distribution(plot_inputs_one, expert_idx, output_dir):
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    input_list_one = plot_inputs_one.flatten().to(torch.float32).numpy()
+    input_list_one = np.abs(input_list_one)
+    input_list_one = input_list_one[np.isfinite(input_list_one)]
+    input_list_one = input_list_one[input_list_one > 0]
+    if input_list_one.size == 0:
+        print(f"expert {expert_idx} has no positive finite values, skip plotting")
+        return
+
+    plot_min = input_list_one.min()
+    plot_max = input_list_one.max()
+    if np.isclose(plot_min, plot_max):
+        plot_min = max(plot_min / 10, np.finfo(np.float32).tiny)
+        plot_max = plot_max * 10
+
+    bins = np.logspace(np.log10(plot_min), np.log10(plot_max), 200)
+    print(f"expert {expert_idx} max value: {np.max(input_list_one)}")
+
+    fig_h = 9 / 2.54
+    fig_w = 1.3 * fig_h
+    fontsize = 14
+    axis_label_fontsize = 16
+
+    plt.figure(figsize=(fig_w, fig_h))
+    ax = sns.histplot(
+        input_list_one,
+        bins=bins,
+        color='darkblue',
+    )
+
+    q50 = np.percentile(input_list_one, 50)
+    q25_val = np.percentile(input_list_one, 25)
+    q75_val = np.percentile(input_list_one, 75)
+
+    plt.axvline(q25_val, color='orange', linestyle='-.', label=f'p25: {q25_val:.4f}')
+    plt.axvline(q50, color='green', linestyle='-.', label=f'p50: {q50:.4f}')
+    plt.axvline(q75_val, color='red', linestyle='-.', label=f'p75: {q75_val:.4f}')
+
+    plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+    plt.xscale('log')
+    plt.xlim(plot_min, plot_max)
+    max_count = max((patch.get_height() for patch in ax.patches), default=0.0)
+    if max_count > 0:
+        plt.ylim(0, max_count * 1.25)
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.gca().yaxis.get_offset_text().set_size(fontsize)
+
+    plt.subplots_adjust(top=0.93, bottom=0.20, left=0.20, right=0.95)
+    plt.xlabel("Absolute Value of Activation (log scale)", fontsize=axis_label_fontsize, x=0.40)
+    plt.ylabel("Frequency", fontsize=axis_label_fontsize)
+    plt.legend(fontsize=fontsize, loc='upper left')
+
+    figure_path = output_dir / f"down_proj_inputs_distribution_expert{expert_idx}.png"
+    plt.savefig(figure_path)
+    plt.close()
+    print(f"Saved plot to {figure_path}")
+
+
+def plot_collected_inputs(collected_inputs, output_dir, max_experts=20):
+    for expert_idx, plot_inputs_one in enumerate(collected_inputs[:max_experts]):
+        plot_expert_distribution(plot_inputs_one, expert_idx, output_dir)
+
+
+def plot_saved_results(raw_path, output_dir, max_experts=20):
+    collected_inputs = torch.load(raw_path, map_location="cpu")
+    print(f"Loaded raw inputs from {raw_path}")
+    plot_collected_inputs(collected_inputs, output_dir, max_experts=max_experts)
+
+
+def collect_down_proj_inputs(model_name, text):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+        device_map='auto',
+        offload_buffers=True,
+    )
+    model.generation_config = GenerationConfig.from_pretrained(model_name)
+    model.generation_config.pad_token_id = model.generation_config.eos_token_id
+    print(model)
+
+    collected_inputs = []
+
+    def hook(module, input, output):
+        collected_inputs.append(input[0].cpu())
+
+    for name, layer in model.model.layers.named_modules():
+        if "down_proj" in name and ".experts." in name:
+            layer.register_forward_hook(hook)
+
+    model.eval()
+    with torch.no_grad():
+        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        model(**inputs)
+
+    return collected_inputs
 
 text1 = "A robe takes 2 bolts of blue fiber and half that much white fiber.  How many bolts in total does it take?"
 text2 =  "Mathematics is an area of knowledge that includes the topics of numbers, formulas and related structures, shapes and the spaces in which they are contained"
@@ -73,157 +188,49 @@ Summarize the following article, highlight all major points in the summary. Limi
 
 text = text1 + " " + text2 + " " + text3 + " " + text4 + " " + text5 + " " + text6 + " " + text8
 
-model.eval()
-
-
-with torch.no_grad():
-
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    outputs = model(**inputs)
-
-    # inputs = tokenizer(text8, return_tensors="pt").to(model.device)
-    # outputs = model(**inputs)
-
-# print(len(collect_inputs))
-# print(collect_inputs[1].shape)
-# expert_idx = 0
-# plot_inputs_one = collect_inputs[expert_idx]
-# plot_inputs = torch.cat(collect_inputs, dim=0)
-# print(plot_inputs.shape)
-# ## plot the distribution of the inputs
-# input_list = plot_inputs.flatten().to(torch.float32).numpy()
-# ## clip all outliers, i.e., values greater than 100 and less than -100
-# input_list = input_list[(input_list < 8) & (input_list > -8)]
-
-
-
-# plt.hist(input_list, bins=200)
-# plt.title("Distribution of Down Projection Inputs")
-# plt.xlabel("Value")
-# plt.ylabel("Frequency")
-# plt.savefig("down_proj_inputs_distribution_all.png")
-# plt.close()
-## plot the distribution of the inputs for the first layer
-
-
-
-# expert_idx = 0
-for expert_idx in range(20):
-    plot_inputs_one = collect_inputs[expert_idx]
-    input_list_one = plot_inputs_one.flatten().to(torch.float32).numpy()
-    #input_list_one = input_list_one[(input_list_one < 4) & (input_list_one > -4)]
-    ## 取绝对值
-    input_list_one =  np.abs(input_list_one)
-    print(f"max value: {np.max(input_list_one)}, ")
-
-    # plt.hist(input_list_one, bins=200)
-    import seaborn as sns
-    # ## 设置宽高
-    fig_w = 16/2.54 ## cm to inch
-    fig_h = 8/2.54
-
-    fontsize = 11
-    # legendsize = 10
-    plt.figure(figsize=(fig_w, fig_h))
-    # sns.histplot(input_list_one, kde=True, bins=1000, color='darkblue')
-
-
-    # 绘制直方图+KDE
-    sns.histplot(
-        input_list_one,
-        bins=200, 
-        color='darkblue',
-        log_scale=True  # 等价于plt.xscale('log')，但更适配seaborn
+def parse_args():
+    parser = argparse.ArgumentParser(description="Collect and plot down_proj activation distributions.")
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Skip model forward and only plot from a saved raw tensor file.",
     )
-
-    mean_val = np.mean(input_list_one)
-    median_val = np.median(input_list_one)
-    q50 = np.percentile(input_list_one, 50)  # 中位数
-    q25_val = np.percentile(input_list_one, 25)  # 1/4分位数
-    q75_val = np.percentile(input_list_one, 75)  # 3/4分位数
-    q99_val = np.percentile(input_list_one, 99)  # 99分位数
-
-    # 添加统计参考线
-    # plt.axvline(mean_val, color='red', linestyle='--', label=f'Mean: {mean_val:.2f}')
-
-    plt.axvline(q25_val, color='orange', linestyle='-.', label=f'25th Percentile: {q25_val:.4f}')
-    plt.axvline(q50, color='green', linestyle='-.', label=f'50th Percentile: {q50:.4f}')
-    plt.axvline(q75_val, color='red', linestyle='-.', label=f'75th Percentile: {q75_val:.4f}')
-    # plt.axvline(q99_val, color='red', linestyle='-.', label=f'99th Percentile: {q99_val:.2f}')
-
-
-
-
-
-    ## y轴设置科学计数法
-    plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-    ## set log for x axis
-    # plt.xscale('log')
-    ## 设置titick label大小
-    plt.xticks(fontsize=fontsize)
-    plt.yticks(fontsize=fontsize)
-
-    ## 设置更小的顶部边距
-    plt.subplots_adjust(top=0.95, bottom=0.18, left=0.1, right=0.98)
-    # plt.title("Distribution of Down Projection Inputs")
-    plt.xlabel("Absolute Value of Activation", fontsize=fontsize)
-    plt.ylabel("Frequency", fontsize=fontsize)
-    plt.legend(fontsize=fontsize, loc='upper left')  # 调整图例位置
-    plt.savefig(f"down_proj_inputs_distribution_expert{expert_idx}.png")
-    plt.close()
+    parser.add_argument(
+        "--raw-path",
+        type=Path,
+        default=None,
+        help="Path to a saved raw tensor file. Defaults to <output-dir>/down_proj_inputs_raw.pt.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory for saved raw inputs, summaries, and figures.",
+    )
+    parser.add_argument(
+        "--max-experts",
+        type=int,
+        default=20,
+        help="Maximum number of experts to plot.",
+    )
+    return parser.parse_args()
 
 
-# 关键修复：更严格的数据清洗
-# # 1. 移除NaN和无穷大值
-# input_list_one = input_list_one[~np.isnan(input_list_one)]
-# input_list_one = input_list_one[~np.isinf(input_list_one)]
+def main():
+    args = parse_args()
+    output_dir = args.output_dir
+    raw_path = args.raw_path or (output_dir / "down_proj_inputs_raw.pt")
 
-# 2. 移除零值（避免log10(0)错误）
-# input_list_one = input_list_one[input_list_one > 0]
+    if args.plot_only:
+        if not raw_path.exists():
+            raise FileNotFoundError(f"Raw input file not found: {raw_path}")
+        plot_saved_results(raw_path, output_dir, max_experts=args.max_experts)
+        return
 
-# mean_val = np.mean(input_list_one)
-# median_val = np.median(input_list_one)
-# q25_val = np.percentile(input_list_one, 25)  # 1/4分位数
-# q75_val = np.percentile(input_list_one, 75)  # 3/4分位数
+    collected_inputs = collect_down_proj_inputs(MODEL_NAME, text)
+    save_intermediate_results(collected_inputs, output_dir)
+    plot_collected_inputs(collected_inputs, output_dir, max_experts=args.max_experts)
 
-# # 配置图形尺寸
-# fig_w = 16/2.54  # 厘米转英寸
-# fig_h = 8/2.54
-# fontsize = 11
 
-# plt.figure(figsize=(fig_w, fig_h))
-
-# # 按对数间隔划分bins，适应对数刻度
-# log_min = np.log10(input_list_one.min())
-# log_max = np.log10(input_list_one.max())
-# bins = np.logspace(log_min, log_max, 100)  # 生成100个对数间隔的bins
-
-# # 绘制直方图和核密度估计
-# sns.histplot(
-#     input_list_one, 
-#     kde=True, 
-#     bins=bins, 
-#     color='darkblue',
-#     log_scale=True  # 使用对数刻度
-# )
-
-# # 添加统计参考线
-# plt.axvline(mean_val, color='red', linestyle='--', label=f'Mean: {mean_val:.2f}')
-# plt.axvline(median_val, color='green', linestyle='-.', label=f'Median: {median_val:.2f}')
-# plt.axvline(q25_val, color='orange', linestyle='-', label=f'25th Percentile: {q25_val:.2f}')
-# plt.axvline(q75_val, color='purple', linestyle='-', label=f'75th Percentile: {q75_val:.2f}')
-
-# # 优化坐标轴和标签
-# plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))  # y轴使用科学计数法
-# plt.xticks(fontsize=fontsize)
-# plt.yticks(fontsize=fontsize)
-# plt.xlabel("Activation Value (log scale)", fontsize=fontsize)
-# plt.ylabel("Frequency", fontsize=fontsize)
-# plt.legend(fontsize=fontsize-1, loc='upper left')  # 调整图例位置
-
-# # 调整布局，避免标签被截断
-# plt.subplots_adjust(top=0.92, bottom=0.15, left=0.15, right=0.95)
-
-# # 保存图像，设置较高的dpi以保证清晰度
-# plt.savefig("down_proj_inputs_with_quantiles.png", dpi=300, bbox_inches='tight')
-# plt.close()
+if __name__ == "__main__":
+    main()
