@@ -96,14 +96,10 @@ def main():
     normal_colors = ["tab:blue", "tab:green", "tab:gray", "tab:purple", "tab:brown"]
     baseline_color = "tab:green"
 
-    fig, (ax, ax_leg) = plt.subplots(
-        1,
-        2,
-        figsize=(5.1, 1.8),
-        gridspec_kw={"width_ratios": [4.4, 0.8]},
-    )
+    fig, ax = plt.subplots(figsize=(4.3, 1.8))
 
     valid_curve_files = []
+    max_elapsed = 0.0
 
     for idx, (csv_file, label) in enumerate(curves):
         elapsed, dispatch_k = load_curve(csv_file, min_step=min_step)
@@ -118,6 +114,7 @@ def main():
 
         ax.plot(elapsed, dispatch_k, label=label, color=color)
         valid_curve_files.append(csv_file)
+        max_elapsed = max(max_elapsed, elapsed[-1])
 
     if base_csv is not None:
         elapsed, _ = load_curve(base_csv, min_step=min_step)
@@ -126,29 +123,35 @@ def main():
         else:
             baseline_y = [base_value] * len(elapsed)
             ax.plot(elapsed, baseline_y, label=base_label, color=baseline_color)
+            max_elapsed = max(max_elapsed, elapsed[-1])
 
     ax.set_xlabel("Elapsed Time (s)")
     ax.set_ylabel("Dispatched Routing\nBudget ($k$)")
     ax.grid(True, alpha=0.3)
+    if max_elapsed > 0:
+        ax.set_xlim(0, max_elapsed * 1.15)
 
     handles, labels = ax.get_legend_handles_labels()
-    ax_leg.axis("off")
     if handles:
-        ax_leg.legend(
+        ax.legend(
             handles,
             labels,
-            loc="center left",
-            frameon=False,
+            loc="upper right",
+            bbox_to_anchor=(0.985, 0.98),
+            frameon=True,
+            facecolor="white",
+            edgecolor="none",
+            framealpha=0.85,
             ncol=1,
             handlelength=1.0,
             handletextpad=0.35,
             labelspacing=0.25,
-            borderpad=0.0,
+            borderpad=0.25,
             columnspacing=0.0,
             prop={"size": 7},
         )
 
-    plt.tight_layout(pad=0.2, w_pad=0.15)
+    plt.tight_layout(pad=0.2)
 
     if valid_curve_files:
         output_dir = os.path.dirname(os.path.abspath(valid_curve_files[0]))
@@ -165,4 +168,7 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python3 '/home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k.py' '/home/xxf/NewVLLM/vllm/test/bench_results-inf/inf-8-5/log-ttft-awe.csv' Ours '/home/xxf/NewVLLM/vllm/test/bench_results-inf/inf-8-5/log-fifo-awe.csv' FIFO+k-aware  --base '/home/xxf/NewVLLM/vllm/test/bench_results-inf/inf-8-5/log-fifo-agn.csv' FIFO+k-agno --base_value 24 --min_step 50
+# python3 '/home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k.py' '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-12-5/log-ttft-awe.csv' MoE-PRISM '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-12-5/log-fifo-awe.csv' vLLM+K  --base '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-12-5/log-fifo-agn.csv' vLLM --base_value 24 --min_step 50
+
+
+# python3 '/home/xxf/NewVLLM/vllm/experiment/draw_dispatch_k.py' '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-16-6/log-ttft-awe.csv' MoE-PRISM '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-16-6/log-fifo-awe.csv' vLLM+K  --base '/home/xxf/NewVLLM/vllm/test2/bench_results-inf/inf-16-6/log-fifo-agn.csv' vLLM --base_value 32 --min_step 50
